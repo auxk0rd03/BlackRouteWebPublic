@@ -1,0 +1,68 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="dashboard layout-grid">
+    <div class="left-col">
+        <div class="status-bar" style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <p style="margin: 0; color: var(--text-secondary); font-weight: 600; font-size: 0.9em;">STATUS: <span class="status-ok">OPERATIONAL</span></p>
+            <div hx-get="/api/engines-status" hx-trigger="load, every 10s" hx-swap="innerHTML"></div>
+        </div>
+
+        <div class="panel control-panel">
+            <form hx-post="/api/scan" hx-target="#logs-area" hx-swap="innerHTML">
+                <label for="target_url" style="color: var(--text-secondary); font-weight: 600; font-size: 0.85em; display: block; margin-bottom: 5px; text-transform: uppercase;">
+                    TARGET WEB APPLICATION / DOMAIN:
+                </label>
+                <div class="input-group">
+                    <input type="text" id="target_url" name="target_url" placeholder="https://app.example.com or http://localhost:3000" autocomplete="off" required>
+                    <button type="submit" class="btn-scan btn">ENGAGE</button>
+                </div>
+
+                <div class="options-group" style="margin-top: 14px; font-size: 0.82em; color: var(--text-secondary); display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="shadow_mode" name="shadow_mode" style="cursor: pointer;">
+                        <label for="shadow_mode" style="cursor: pointer;">Enable Shadow Architecture (Retain raw noise and low-confidence intercepts)</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="local_staging" name="local_staging" style="cursor: pointer;">
+                        <label for="local_staging" style="cursor: pointer; color: var(--warning-color);">Enable Local Staging Mode (Permit auditing 127.0.0.1 / private test targets)</label>
+                    </div>
+                </div>
+
+                <details style="margin-top: 12px; font-size: 0.82em; color: var(--text-secondary);">
+                    <summary style="cursor: pointer; font-weight: 600;">[+] Advanced Authentication & Headers</summary>
+                    <div style="margin-top: 8px;">
+                        <label for="auth_header" style="display: block; margin-bottom: 4px;">Authorization Header (Bearer / Token / Cookie):</label>
+                        <input type="text" id="auth_header" name="auth_header" placeholder="Bearer eyJhbGciOi..." style="width: 100%;">
+                    </div>
+                </details>
+            </form>
+        </div>
+
+        <div class="panel logs-container">
+            <div class="logs-header" style="color: var(--sub-accent); font-weight: 600; font-size: 0.85em; text-transform: uppercase;">System Mission Logs</div>
+            <div id="logs-area" class="logs-stream">
+                <span>> READY FOR MISSION TARGET...</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="right-col">
+        <div id="results-area" style="height: 100%;">
+            <div class="panel" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; border-style: dashed; color: var(--text-secondary);">
+                <div style="margin-bottom: 20px; font-size: 0.95em;">
+                    <span>Awaiting Target Execution and Intercept Stream...</span>
+                </div>
+                <div class="report-generation" style="text-align: center;">
+                    <div style="font-size: 0.85em; text-transform: uppercase; margin-bottom: 10px; color: var(--sub-accent); font-weight: 600;">Report Artifact Export</div>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
+                        <button class="btn" disabled>[ ACCESS VIDS AUDIT REPORT ]</button>
+                        <button class="btn" disabled>Export STIX 2.1</button>
+                        <button class="btn" disabled>Export TAXII</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

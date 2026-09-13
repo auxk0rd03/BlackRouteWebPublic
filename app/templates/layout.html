@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title or "BlackRoute-Web | CyberNest Labs" }}</title>
+    <link rel="icon" type="image/png" href="/static/CyberNestLabsLogo.png">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <link rel="stylesheet" href="/static/terminal.css">
+    <link rel="stylesheet" href="/static/brand.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="brand-header">
+        <img src="/static/CyberNestLabsLogo.png" alt="CyberNest Labs Logo" class="brand-logo">
+        <div class="brand-title">
+            <h1>BLACKROUTE-WEB</h1>
+            <span class="version">v1.0-ENTERPRISE WEB DAST & AUDIT ENGINE</span>
+        </div>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

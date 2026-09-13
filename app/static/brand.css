@@ -1,0 +1,34 @@
+/* CyberNest Labs Branding */
+
+.brand-header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid var(--border-primary);
+    margin-bottom: 20px;
+}
+
+.brand-logo {
+    width: 60px;
+    height: auto;
+    display: block;
+}
+
+.brand-title {
+    display: flex;
+    flex-direction: column;
+}
+
+.brand-title h1 {
+    margin: 0;
+    font-size: 1.8rem;
+    color: var(--text-primary);
+    letter-spacing: 2px;
+}
+
+.brand-title .version {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    letter-spacing: 1px;
+}

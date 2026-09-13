@@ -1,0 +1,26 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Rust build artifacts
+engines/**/target/
+
+# Temporary data & databases
+*.db
+*.sqlite3
+.tmp/
+br_web_*
+
+# Build distributions
+dist/
+build/
+*.spec
+
+# Reports generated during tests
+app/static/BlackRoute_Web_Report_*.pdf
