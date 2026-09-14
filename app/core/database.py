@@ -36,9 +36,16 @@ def init_db() -> None:
             evidence TEXT,
             confidence REAL DEFAULT 1.0,
             remediation TEXT,
+            curl_command TEXT,
             FOREIGN KEY (scan_id) REFERENCES scans (id)
         )
     ''')
+
+    # Backward-compatible schema migration for existing databases
+    cursor.execute("PRAGMA table_info(findings)")
+    columns = [col["name"] for col in cursor.fetchall()]
+    if "curl_command" not in columns:
+        cursor.execute("ALTER TABLE findings ADD COLUMN curl_command TEXT")
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS endpoints (
@@ -65,6 +72,7 @@ def save_scan_record(
     status: str = "completed"
 ) -> int:
     """Persist scan results, findings, and discovered endpoints into SQLite."""
+    init_db()
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -84,8 +92,8 @@ def save_scan_record(
     for f in findings:
         cursor.execute(
             """
-            INSERT INTO findings (scan_id, severity, category, title, description, endpoint, evidence, confidence, remediation)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO findings (scan_id, severity, category, title, description, endpoint, evidence, confidence, remediation, curl_command)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 scan_id,
@@ -96,7 +104,8 @@ def save_scan_record(
                 str(f.get("endpoint", target_url)),
                 str(f.get("evidence", ""))[:1500],
                 float(f.get("confidence", 1.0)),
-                str(f.get("remediation", ""))
+                str(f.get("remediation", "")),
+                str(f.get("curl_command", ""))
             )
         )
 

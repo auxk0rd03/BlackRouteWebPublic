@@ -28,8 +28,59 @@ def engine_available(name: str) -> bool:
     """Check if a specific compiled engine binary exists and is executable."""
     return _find_engine(name) is not None
 
+def _extract_json_payload(raw: str) -> Optional[Any]:
+    """
+    Resilient boundary-aware JSON payload extractor.
+    Locates and parses the outermost valid JSON structure, ignoring
+    any preceding/trailing diagnostic messages, compiler warnings, or panics.
+    """
+    if not raw:
+        return None
+    raw_clean = raw.strip()
+
+    # 1. Fast path: direct parse
+    try:
+        return json.loads(raw_clean)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Boundary search: find first { or [ and last matching } or ]
+    start_obj = raw_clean.find('{')
+    start_arr = raw_clean.find('[')
+
+    start_idx = -1
+    end_char = '}'
+    if start_obj != -1 and (start_arr == -1 or start_obj < start_arr):
+        start_idx = start_obj
+        end_char = '}'
+    elif start_arr != -1:
+        start_idx = start_arr
+        end_char = ']'
+
+    if start_idx != -1:
+        end_idx = raw_clean.rfind(end_char)
+        if end_idx != -1 and end_idx > start_idx:
+            candidate = raw_clean[start_idx:end_idx + 1]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+    # 3. Incremental decoder: scan forward from first bracket
+    decoder = json.JSONDecoder()
+    for idx in range(len(raw_clean)):
+        if raw_clean[idx] in ('{', '['):
+            try:
+                obj, _ = decoder.raw_decode(raw_clean[idx:])
+                if isinstance(obj, (dict, list)):
+                    return obj
+            except json.JSONDecodeError:
+                continue
+
+    return None
+
 def _run_engine(binary_path: str, args: List[str], timeout: int = 60) -> Optional[Dict[str, Any]]:
-    """Execute compiled engine binary via subprocess without shell=True and parse JSON."""
+    """Execute compiled engine binary via subprocess without shell=True and parse JSON safely."""
     cmd = [binary_path] + args
     try:
         result = subprocess.run(
@@ -38,17 +89,28 @@ def _run_engine(binary_path: str, args: List[str], timeout: int = 60) -> Optiona
             text=True,
             timeout=timeout
         )
+
         stdout = result.stdout.strip()
-        if not stdout:
+        parsed = _extract_json_payload(stdout)
+
+        if parsed is not None and isinstance(parsed, dict):
+            return parsed
+
+        if result.returncode != 0:
+            logger.warning(
+                "Engine %s failed (exit %d). stderr: %s",
+                binary_path, result.returncode, result.stderr[:500]
+            )
+        elif not stdout:
             logger.warning("Engine %s returned empty stdout (exit %d)", binary_path, result.returncode)
-            return None
-        return json.loads(stdout)
+        else:
+            logger.warning("Engine %s produced unparseable output: %s", binary_path, stdout[:300])
+
     except subprocess.TimeoutExpired:
         logger.error("Engine %s timed out after %ds", binary_path, timeout)
-    except json.JSONDecodeError as exc:
-        logger.error("Engine %s produced invalid JSON: %s", binary_path, exc)
     except Exception as exc:
         logger.error("Error executing engine %s: %s", binary_path, exc)
+
     return None
 
 
@@ -60,7 +122,7 @@ def _run_engine(binary_path: str, args: List[str], timeout: int = 60) -> Optiona
 def run_spider_extractor(target_path: str) -> Dict[str, Any]:
     """
     Extract endpoints, links, and forms from a file or directory using Rust web_spider.
-    Falls back to Python parser if the Rust engine binary is not compiled.
+    Validates output schema and falls back to Python parser if engine fails or crashes.
     """
     engine = _find_engine("web_spider")
     safe_path = _validate_path(target_path)
@@ -68,8 +130,10 @@ def run_spider_extractor(target_path: str) -> Dict[str, Any]:
     if engine is not None:
         args = ["dir", safe_path] if os.path.isdir(safe_path) else [safe_path]
         result = _run_engine(engine, args, timeout=45)
-        if result is not None:
+        # Schema validation
+        if result is not None and "endpoints" in result and isinstance(result["endpoints"], list):
             return result
+        logger.info("web_spider engine unavailable or schema mismatch; falling back to Python.")
 
     # Python Fallback
     return _python_fallback_spider(safe_path)
@@ -127,7 +191,6 @@ def _python_fallback_spider(path: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # Deduplicate endpoints by path
     unique_endpoints = {v["path"]: v for v in endpoints}.values()
     return {
         "target_path": path,
@@ -147,21 +210,24 @@ def _python_fallback_spider(path: str) -> Dict[str, Any]:
 def run_surface_graph(endpoints: List[str], headers: Dict[str, str], content: str) -> Dict[str, Any]:
     """
     Build attack surface hierarchy, fingerprint tech stacks, and score surface risk.
-    Falls back to Python implementation if Go engine binary is not compiled.
+    Validates output schema and falls back to Python if engine fails or crashes.
     """
     engine = _find_engine("surface_graph")
     payload = {
         "endpoints": endpoints,
         "headers": headers,
-        "content": content[:100000] # cap sample size for IPC
+        "content": content[:100000]
     }
 
     if engine is not None:
         try:
             cmd = [engine, json.dumps(payload)]
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            if res.returncode == 0 and res.stdout.strip():
-                return json.loads(res.stdout.strip())
+            parsed = _extract_json_payload(res.stdout)
+            # Schema validation
+            if parsed is not None and isinstance(parsed, dict) and ("nodes" in parsed or "total_routes" in parsed):
+                return parsed
+            logger.info("surface_graph engine output failed schema check; falling back to Python.")
         except Exception as exc:
             logger.warning("surface_graph engine execution failed, falling back to Python: %s", exc)
 
@@ -193,7 +259,6 @@ def _python_fallback_surface_graph(endpoints: List[str], headers: Dict[str, str]
         if any(kw in path.lower() for kw in sensitive_keywords):
             sensitive_routes.append(path)
 
-    # Simple tech fingerprinting
     techs = []
     c_lower = content.lower()
     if "_next/static" in c_lower:

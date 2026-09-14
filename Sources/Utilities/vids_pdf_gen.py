@@ -91,6 +91,7 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
             desc = f.get("description", "")
             evidence = f.get("evidence", "")
             remediation = f.get("remediation", "")
+            curl_cmd = f.get("curl_command", "")
 
             # Severity Color
             if sev == "CRITICAL":
@@ -111,7 +112,11 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
             # Details
             pdf.set_text_color(40, 40, 40)
             pdf.set_font("Courier", size=8)
+
             details = f"Target: {endpoint}\nDescription: {desc}\nEvidence: {evidence[:200]}\nRemediation: {remediation}\n"
+            if curl_cmd:
+                details += f"Reproducible cURL PoC: {curl_cmd}\n"
+
             pdf.multi_cell(0, 4.5, sanitize(details))
             pdf.ln(3)
 

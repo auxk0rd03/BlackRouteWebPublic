@@ -106,6 +106,7 @@ class TestPipelineE2E(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(scan_rec)
         self.assertEqual(scan_rec["target_url"], f"{target}/")
         self.assertEqual(len(db_findings), len(scanner.findings))
+        self.assertTrue(all("curl" in f.get("curl_command", "") for f in db_findings), "Every finding must include a cURL PoC")
 
         # Verify STIX 2.1 export
         stix_resp = await export_stix()

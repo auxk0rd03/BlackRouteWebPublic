@@ -1,15 +1,16 @@
+import asyncio
 import datetime
 import html
 import threading
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Form, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Form, BackgroundTasks, Request
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from app.core.database import get_latest_scan_findings
 from app.core.engine_bridge import engine_available
-from app.core.scanner import WebScanner, SCAN_LOGS
+from app.core.scanner import WebScanner, SCAN_LOGS, LOG_SUBSCRIBERS
 
 router = APIRouter()
 logs_lock = threading.Lock()
@@ -39,13 +40,56 @@ async def start_scan(
 
     return f"""
     <div class="log-entry info">[TARGET ENGAGED] {safe_display}</div>
-    <div class="log-entry info">[MISSION ORCHESTRATOR] Launching Reconnaissance and Security Pipeline...</div>
-    <div hx-get="/api/stream-logs" hx-trigger="every 800ms" hx-swap="beforeend"></div>
+    <div class="log-entry info">[MISSION ORCHESTRATOR] Pipeline Activated — Streaming Real-Time Telemetry via SSE...</div>
+    <script>
+        if (typeof window.connectSSE === 'function') {{
+            window.connectSSE();
+        }}
+    </script>
     """
+
+@router.get("/stream-logs-sse")
+async def stream_logs_sse(request: Request):
+    """
+    Yields real-time terminal log events via Server-Sent Events (SSE) over a single persistent connection.
+    Eliminates polling overhead and visual stutter.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    LOG_SUBSCRIBERS.add(queue)
+
+    async def event_generator():
+        try:
+            # Send initial backlog if present
+            with logs_lock:
+                for entry in list(SCAN_LOGS):
+                    single_line_entry = entry.replace("\r", "").replace("\n", " ")
+                    yield f"data: {single_line_entry}\n\n"
+
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    entry = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    single_line_entry = entry.replace("\r", "").replace("\n", " ")
+                    yield f"data: {single_line_entry}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            LOG_SUBSCRIBERS.discard(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 @router.get("/stream-logs", response_class=HTMLResponse)
 async def stream_logs():
-    """Atomically consume and ship logs to the browser stream."""
+    """Atomically consume and ship logs for legacy HTTP polling fallbacks."""
     with logs_lock:
         logs_to_ship = list(SCAN_LOGS)
         SCAN_LOGS.clear()
@@ -53,7 +97,7 @@ async def stream_logs():
 
 @router.get("/status")
 async def get_status():
-    return {"status": "ready", "system": "BlackRoute-Web v1.0"}
+    return {"status": "ready", "system": "BlackRoute-Web v1.0", "streaming": "SSE"}
 
 @router.get("/engines-status", response_class=HTMLResponse)
 async def engines_status():
@@ -69,7 +113,7 @@ async def engines_status():
     html_out = '<div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">'
     html_out += badge("Web Spider", "Rust", rust_spider)
     html_out += badge("Surface Graph", "Go", go_graph)
-    html_out += '<span style="background: rgba(0,0,0,0.3); border: 1px solid var(--accent-color); padding: 2px 7px; border-radius: 3px; font-size: 0.72em; color: var(--accent-color);">[Python] DAST Pipeline: ONLINE</span>'
+    html_out += '<span style="background: rgba(0,0,0,0.3); border: 1px solid var(--accent-color); padding: 2px 7px; border-radius: 3px; font-size: 0.72em; color: var(--accent-color);">[Python] DAST &amp; SSE: ONLINE</span>'
     html_out += '</div>'
     return html_out
 
@@ -108,7 +152,7 @@ async def export_stix():
             "external_references": [
                 {
                     "source_name": "BlackRoute-Web Security Engine",
-                    "description": f"Audited Endpoint: {endpoint} | Remediation: {f.get('remediation', '')}"
+                    "description": f"Audited Endpoint: {endpoint} | PoC: {f.get('curl_command', '')}"
                 }
             ]
         }
@@ -150,7 +194,7 @@ async def export_taxii():
                 "created": now_iso,
                 "modified": now_iso,
                 "name": f"Web Threat Indicator: {f.get('title')}",
-                "description": f"Category: {f.get('category')} | Severity: {f.get('severity')} | Endpoint: {f.get('endpoint')}",
+                "description": f"Category: {f.get('category')} | Severity: {f.get('severity')} | Endpoint: {f.get('endpoint')} | PoC: {f.get('curl_command', '')}",
                 "pattern": f"[network-traffic:dst_ref.value = '{f.get('endpoint')}']",
                 "pattern_type": "stix"
             }

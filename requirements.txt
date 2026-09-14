@@ -7,3 +7,4 @@ pydantic>=2.0.0
 python-multipart
 beautifulsoup4
 httpx
+sse-starlette>=2.0.0

@@ -21,7 +21,7 @@
                 <div class="options-group" style="margin-top: 14px; font-size: 0.82em; color: var(--text-secondary); display: flex; flex-direction: column; gap: 8px;">
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <input type="checkbox" id="shadow_mode" name="shadow_mode" style="cursor: pointer;">
-                        <label for="shadow_mode" style="cursor: pointer;">Enable Shadow Architecture (Retain raw noise and low-confidence intercepts)</label>
+                        <label for="shadow_mode" style="cursor: pointer;">Enable Shadow Architecture (Retain low-entropy secrets &amp; raw findings)</label>
                     </div>
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <input type="checkbox" id="local_staging" name="local_staging" style="cursor: pointer;">
@@ -30,7 +30,7 @@
                 </div>
 
                 <details style="margin-top: 12px; font-size: 0.82em; color: var(--text-secondary);">
-                    <summary style="cursor: pointer; font-weight: 600;">[+] Advanced Authentication & Headers</summary>
+                    <summary style="cursor: pointer; font-weight: 600;">[+] Advanced Authentication &amp; Headers</summary>
                     <div style="margin-top: 8px;">
                         <label for="auth_header" style="display: block; margin-bottom: 4px;">Authorization Header (Bearer / Token / Cookie):</label>
                         <input type="text" id="auth_header" name="auth_header" placeholder="Bearer eyJhbGciOi..." style="width: 100%;">
@@ -40,7 +40,10 @@
         </div>
 
         <div class="panel logs-container">
-            <div class="logs-header" style="color: var(--sub-accent); font-weight: 600; font-size: 0.85em; text-transform: uppercase;">System Mission Logs</div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div class="logs-header" style="color: var(--sub-accent); font-weight: 600; font-size: 0.85em; text-transform: uppercase;">System Mission Logs</div>
+                <span id="sse-badge" style="font-size: 0.72em; color: var(--accent-color); border: 1px solid var(--accent-color); padding: 1px 6px; border-radius: 2px;">LIVE SSE PUSH</span>
+            </div>
             <div id="logs-area" class="logs-stream">
                 <span>> READY FOR MISSION TARGET...</span>
             </div>
@@ -65,4 +68,48 @@
         </div>
     </div>
 </div>
+
+<script>
+    window.activeEventSource = null;
+
+    window.connectSSE = function() {
+        if (window.activeEventSource) {
+            window.activeEventSource.close();
+        }
+
+        const evtSource = new EventSource('/api/stream-logs-sse');
+        window.activeEventSource = evtSource;
+
+        const badge = document.getElementById('sse-badge');
+
+        evtSource.onopen = function() {
+            if (badge) {
+                badge.style.borderColor = 'var(--success-color)';
+                badge.style.color = 'var(--success-color)';
+                badge.innerText = 'SSE CONNECTED';
+            }
+        };
+
+        evtSource.onmessage = function(e) {
+            if (!e.data || e.data.trim() === '') return;
+            const logsArea = document.getElementById('logs-area');
+            if (logsArea) {
+                logsArea.insertAdjacentHTML('beforeend', e.data);
+                logsArea.scrollTop = logsArea.scrollHeight;
+            }
+        };
+
+        evtSource.onerror = function() {
+            if (badge) {
+                badge.style.borderColor = 'var(--warning-color)';
+                badge.style.color = 'var(--warning-color)';
+                badge.innerText = 'SSE RECONNECTING...';
+            }
+        };
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        window.connectSSE();
+    });
+</script>
 {% endblock %}

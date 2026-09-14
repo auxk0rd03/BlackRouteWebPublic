@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  blackroute-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: blackroute-web
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - blackroute_data:/app/data
+      - ./app/static:/app/app/static
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  blackroute_data:
+    driver: local

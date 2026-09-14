@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import urllib.parse
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 
 import aiofiles
 import httpx
@@ -23,6 +23,52 @@ from app.core.auditor_dom import DomAuditor
 from Sources.Utilities.vids_pdf_gen import generate_web_report
 
 SCAN_LOGS: List[str] = []
+LOG_SUBSCRIBERS: Set[asyncio.Queue] = set()
+
+def broadcast_log(entry: str) -> None:
+    """Broadcast log entry to all active SSE subscribers."""
+    for queue in list(LOG_SUBSCRIBERS):
+        try:
+            queue.put_nowait(entry)
+        except Exception:
+            pass
+
+def generate_curl_poc(finding: Dict[str, Any]) -> str:
+    """Generate a functional, reproducible cURL proof-of-concept command for a finding."""
+    endpoint = finding.get("endpoint", "")
+    category = finding.get("category", "").upper()
+    title = finding.get("title", "").lower()
+
+    if not endpoint:
+        endpoint = "https://target.domain/"
+
+    if category == "HEADERS":
+        if "cors" in title or "origin" in title:
+            return f'curl -s -i -X GET "{endpoint}" -H "Origin: https://evil.cybernest.labs"'
+        return f'curl -s -I -X GET "{endpoint}"'
+
+    elif category == "COOKIES":
+        return f'curl -s -I -X GET "{endpoint}" | grep -i "set-cookie"'
+
+    elif category == "SECRETS":
+        evidence = finding.get("evidence", "")
+        token_hint = ""
+        if "Token: " in evidence:
+            token_part = evidence.split("Token: ")[1].split(" |")[0].replace("*", "")
+            if token_part:
+                token_hint = f' | grep -C 2 "{token_part}"'
+        return f'curl -s "{endpoint}"{token_hint}'
+
+    elif category == "API_EXPOSURE":
+        if "graphql" in title or "introspection" in title:
+            return f'curl -s -X POST "{endpoint}" -H "Content-Type: application/json" -d \'{{"query": "{{ __schema {{ queryType {{ name }} }} }}"}}\''
+        return f'curl -s -i -X GET "{endpoint}"'
+
+    elif category == "DOM_XSS":
+        return f'curl -s "{endpoint}"'
+
+    return f'curl -s -i -X GET "{endpoint}"'
+
 
 class WebScanner:
     def __init__(
@@ -44,11 +90,12 @@ class WebScanner:
         self.harvested_content: List[str] = []
 
     def log(self, message: str, log_type: str = "info") -> None:
-        """Append log to global stream buffer with HTML escaping."""
+        """Append log to buffer and broadcast in real time to SSE streams."""
         safe_type = html.escape(log_type)
         safe_message = html.escape(str(message))
         entry = f'<div class="log-entry {safe_type}">[{safe_type.upper()}] {safe_message}</div>'
         SCAN_LOGS.append(entry)
+        broadcast_log(entry)
         print(f"[{safe_type.upper()}] {message}")
 
     async def run_pipeline(self) -> None:
@@ -132,7 +179,7 @@ class WebScanner:
             # Download discovered JS assets securely
             downloaded_scripts = []
             async with httpx.AsyncClient(headers=req_headers, verify=False, follow_redirects=True, timeout=10.0) as dl_client:
-                for src in script_srcs[:25]: # limit to top 25 scripts to avoid denial of service
+                for src in script_srcs[:25]:
                     script_url = urllib.parse.urljoin(validated_url, src)
                     try:
                         js_resp = await dl_client.get(script_url)
@@ -161,21 +208,21 @@ class WebScanner:
                     "source": "JS_SPIDER"
                 })
 
-            # 4. Phase 3: Secret & Credential Leak Detection
-            self.log("Phase 3: Scanning Web Assets for Hardcoded API Keys, Tokens & Credentials...", "info")
+            # 4. Phase 3: Secret & Credential Leak Detection (With Shannon Entropy Filtering)
+            self.log("Phase 3: Scanning Assets for Hardcoded Secrets with Shannon Entropy Evaluation...", "info")
             total_secrets = 0
             # Check main HTML
-            html_secrets = SecretAuditor.audit_content(validated_url, base_content)
+            html_secrets = SecretAuditor.audit_content(validated_url, base_content, shadow_mode=self.shadow_mode)
             self.findings.extend(html_secrets)
             total_secrets += len(html_secrets)
 
             # Check each downloaded script
             for script_url, _, js_content in downloaded_scripts:
-                s_secrets = SecretAuditor.audit_content(script_url, js_content)
+                s_secrets = SecretAuditor.audit_content(script_url, js_content, shadow_mode=self.shadow_mode)
                 self.findings.extend(s_secrets)
                 total_secrets += len(s_secrets)
 
-            self.log(f"Credential Leak Analysis Complete: {total_secrets} potential secrets flagged.", "info" if total_secrets == 0 else "warn")
+            self.log(f"Credential Leak Analysis Complete: {total_secrets} verified high-entropy secrets flagged.", "info" if total_secrets == 0 else "warn")
 
             # 5. Phase 4: Client-Side DOM XSS & postMessage Auditing
             self.log("Phase 4: Auditing Client-Side DOM Sinks & postMessage Handlers...", "info")
@@ -203,7 +250,11 @@ class WebScanner:
             for t in techs:
                 self.log(f"Detected Technology: [{t.get('category')}] {t.get('name')}", "info")
 
-            # 8. Smart Noise Filtering vs. Shadow Mode
+            # 8. Generate Reproducible cURL Commands for Every Finding
+            for f in self.findings:
+                f["curl_command"] = generate_curl_poc(f)
+
+            # 9. Smart Noise Filtering vs. Shadow Mode
             if not self.shadow_mode:
                 suppressed = [f for f in self.findings if f.get("confidence", 1.0) < 0.75]
                 if suppressed:
@@ -212,7 +263,7 @@ class WebScanner:
             else:
                 self.log("[SHADOW MODE] Preserving all raw findings across full confidence spectrum.", "warn")
 
-            # 9. Phase 7: Reporting & SQLite Persistence
+            # 10. Phase 7: Reporting & SQLite Persistence
             self.log("Phase 7: Generating CyberNest VIDS PDF Audit Report...", "info")
             report_data = {
                 "target_url": validated_url,
@@ -243,7 +294,7 @@ class WebScanner:
                     report_file=report_file,
                     status="completed"
                 )
-                self.log("Scan record persisted to local SQLite database.", "info")
+                self.log("Scan record persisted to local SQLite database with cURL commands.", "info")
             except Exception as db_err:
                 self.log(f"Database Persistence Warning: {db_err}", "warn")
 
@@ -259,7 +310,7 @@ class WebScanner:
             self.log("Audit Pipeline Sequence Finished.", "success")
 
     def _render_results_ui(self, report_file: str, risk_score: int, techs: List[Dict[str, str]]) -> None:
-        """Construct interactive results grid for HTMX UI swap."""
+        """Construct interactive results grid with reproducible cURL PoC buttons for HTMX UI swap."""
         crit_count = sum(1 for f in self.findings if f.get("severity") == "CRITICAL")
         high_count = sum(1 for f in self.findings if f.get("severity") == "HIGH")
         med_count = sum(1 for f in self.findings if f.get("severity") == "MEDIUM")
@@ -274,15 +325,19 @@ class WebScanner:
         ])
 
         rows_html = ""
-        for f in self.findings:
+        for idx, f in enumerate(self.findings):
             sev = html.escape(str(f.get("severity", "INFO")))
             title = html.escape(str(f.get("title", "")))
             cat = html.escape(str(f.get("category", "")))
             endpoint = html.escape(str(f.get("endpoint", "")))
             conf = html.escape(str(f.get("confidence", 1.0)))
+            curl_cmd = f.get("curl_command", "")
+            safe_curl = html.escape(curl_cmd).replace('"', '&quot;')
 
-            if len(endpoint) > 40:
-                endpoint = endpoint[:37] + "..."
+            if len(endpoint) > 36:
+                endpoint_display = endpoint[:33] + "..."
+            else:
+                endpoint_display = endpoint
 
             sev_class = f"sev-{sev.lower()}"
 
@@ -290,8 +345,17 @@ class WebScanner:
             <tr>
                 <td class="col-sev {sev_class}">[{sev}]</td>
                 <td class="col-cat">[{cat}]</td>
-                <td class="col-title">{title}</td>
-                <td class="col-path">{endpoint}</td>
+                <td class="col-title">
+                    <div>{title}</div>
+                    <div style="margin-top: 5px; display: flex; gap: 6px; align-items: center;">
+                        <button onclick="copyCurlPoC(this)" data-curl="{safe_curl}" class="btn" style="padding: 2px 8px; font-size: 0.72em; border-color: var(--border-secondary);">[COPY cURL PoC]</button>
+                        <details style="font-size: 0.75em; color: var(--text-secondary); margin: 0;">
+                            <summary style="cursor: pointer;">Command</summary>
+                            <div style="background: var(--bg-color); border: 1px solid var(--border-secondary); padding: 4px; margin-top: 4px; font-family: var(--font-mono); font-size: 0.85em; word-break: break-all;">{html.escape(curl_cmd)}</div>
+                        </details>
+                    </div>
+                </td>
+                <td class="col-path">{endpoint_display}</td>
                 <td class="col-conf">{conf}</td>
             </tr>
             """
@@ -325,11 +389,11 @@ class WebScanner:
                     <table>
                         <thead>
                             <tr>
-                                <th style="width: 12%">SEV</th>
-                                <th style="width: 15%">CAT</th>
-                                <th>FINDING TITLE</th>
+                                <th style="width: 11%">SEV</th>
+                                <th style="width: 14%">CAT</th>
+                                <th>FINDING &amp; cURL PoC</th>
                                 <th style="width: 25%">TARGET ENDPOINT</th>
-                                <th style="width: 10%">CONF</th>
+                                <th style="width: 9%">CONF</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -348,6 +412,21 @@ class WebScanner:
             </div>
         </div>
         <script>
+            function copyCurlPoC(btn) {{
+                const cmd = btn.getAttribute('data-curl');
+                if (navigator.clipboard && cmd) {{
+                    navigator.clipboard.writeText(cmd).then(() => {{
+                        const original = btn.innerText;
+                        btn.innerText = '[COPIED TO CLIPBOARD!]';
+                        btn.style.color = 'var(--success-color)';
+                        setTimeout(() => {{
+                            btn.innerText = original;
+                            btn.style.color = '';
+                        }}, 1600);
+                    }});
+                }}
+            }}
+
             setTimeout(() => {{
                 const src = document.getElementById('temp-results-container');
                 const dest = document.getElementById('results-area');
@@ -358,4 +437,6 @@ class WebScanner:
         </script>
         """
 
+        self.log("Mission audit completed. Intercept results rendered.", "success")
         SCAN_LOGS.append(results_html)
+        broadcast_log(results_html)

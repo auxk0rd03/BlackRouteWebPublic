@@ -2,10 +2,11 @@ import unittest
 import os
 import httpx
 from app.core.auditor_headers import HeaderAuditor
-from app.core.auditor_secrets import SecretAuditor
+from app.core.auditor_secrets import SecretAuditor, calculate_shannon_entropy
 from app.core.auditor_dom import DomAuditor
 from app.core.security import validate_target_url, normalize_target_url
-from app.core.engine_bridge import run_spider_extractor, run_surface_graph
+from app.core.engine_bridge import run_spider_extractor, run_surface_graph, _extract_json_payload
+from app.core.scanner import generate_curl_poc
 from Sources.Utilities.vids_pdf_gen import generate_web_report
 
 class TestBlackRouteWebAudit(unittest.TestCase):
@@ -15,15 +16,12 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         self.assertEqual(normalize_target_url("http://app.test:8080/api"), "http://app.test:8080/api")
 
     def test_ssrf_blocking(self):
-        # Loopback should be rejected in public mode
         with self.assertRaises(ValueError):
             validate_target_url("http://127.0.0.1:8000", allow_local_staging=False)
 
-        # Loopback should be allowed when local staging mode is enabled
         valid = validate_target_url("http://127.0.0.1:8000", allow_local_staging=True)
         self.assertTrue(valid.startswith("http://127.0.0.1:8000"))
 
-        # Cloud metadata must be blocked ALWAYS
         with self.assertRaises(ValueError):
             validate_target_url("http://169.254.169.254", allow_local_staging=True)
 
@@ -59,19 +57,87 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["severity"], "CRITICAL")
 
-    def test_secret_auditor(self):
-        dummy_content = """
+    def test_shannon_entropy_calculation(self):
+        # Repetitive strings have near-zero entropy
+        low_ent = calculate_shannon_entropy("AKIAAAAAAAAAAAAAAAAA")
+        self.assertTrue(low_ent < 1.5, f"Expected low entropy, got {low_ent}")
+
+        # High-randomness cryptographic secrets have high entropy
+        high_ent = calculate_shannon_entropy("sk_live_51ABCDEF1234567890abcdefghijklmnopqrstuvwxyz")
+        self.assertTrue(high_ent >= 3.5, f"Expected high entropy, got {high_ent}")
+
+    def test_secret_auditor_with_entropy_filter(self):
+        # 1. Repetitive dummy key: should be suppressed in normal mode
+        dummy_repetitive = 'const key = "AKIAAAAAAAAAAAAAAAAA";'
+        findings_suppressed = SecretAuditor.audit_content("https://example.com/app.js", dummy_repetitive, shadow_mode=False)
+        self.assertEqual(len(findings_suppressed), 0, "Repetitive mock key should be filtered out by entropy gate")
+
+        # In shadow mode, it should be kept but flagged as low-entropy INFO
+        findings_shadow = SecretAuditor.audit_content("https://example.com/app.js", dummy_repetitive, shadow_mode=True)
+        self.assertEqual(len(findings_shadow), 1)
+        self.assertEqual(findings_shadow[0]["severity"], "INFO")
+
+        # 2. Genuine high-entropy secret
+        real_content = """
         const config = {
             aws_key: "AKIAIOSFODNN7EXAMPLE",
             stripe: "sk_live_51ABCDEF1234567890abcdefghijklmnopqrstuvwxyz",
-            openai: "sk-abcdefghijklmnopqrstuvwxyz1234567890"
+            openai: "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"
         };
         """
-        findings = SecretAuditor.audit_content("https://example.com/main.js", dummy_content)
+        findings = SecretAuditor.audit_content("https://example.com/main.js", real_content)
         rule_titles = [f["title"] for f in findings]
         self.assertTrue(any("AWS" in t for t in rule_titles))
         self.assertTrue(any("Stripe" in t for t in rule_titles))
         self.assertTrue(any("OpenAI" in t for t in rule_titles))
+        self.assertIn("Entropy:", findings[0]["evidence"])
+
+    def test_curl_poc_generation(self):
+        f_cors = {
+            "category": "HEADERS",
+            "title": "CORS Insecure Origin Reflection",
+            "endpoint": "https://api.example.com/data"
+        }
+        curl_cors = generate_curl_poc(f_cors)
+        self.assertIn("curl", curl_cors)
+        self.assertIn("Origin: https://evil.cybernest.labs", curl_cors)
+
+        f_secret = {
+            "category": "SECRETS",
+            "title": "Exposed AWS Access Key ID",
+            "endpoint": "https://app.example.com/bundle.js",
+            "evidence": "Pattern: AWS_KEY | Token: AKIA****MPLE"
+        }
+        curl_secret = generate_curl_poc(f_secret)
+        self.assertIn("curl", curl_secret)
+        self.assertIn("grep", curl_secret)
+
+        f_graphql = {
+            "category": "API_EXPOSURE",
+            "title": "GraphQL Introspection Enabled",
+            "endpoint": "https://app.example.com/graphql"
+        }
+        curl_graphql = generate_curl_poc(f_graphql)
+        self.assertIn("__schema", curl_graphql)
+
+    def test_resilient_json_extraction(self):
+        # Direct clean JSON
+        clean_json = '{"total_routes": 5, "nodes": ["/a", "/b"]}'
+        self.assertEqual(_extract_json_payload(clean_json)["total_routes"], 5)
+
+        # Noisy JSON preceded by compiler warnings or panic traces
+        noisy_json = """
+        [WARN] Rust runtime initializing...
+        [DEBUG] Cache hit on /tmp/sample
+        {"total_endpoints": 3, "endpoints": [{"path": "/api"}]}
+        [TRACE] Exiting process with code 0
+        """
+        parsed = _extract_json_payload(noisy_json)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["total_endpoints"], 3)
+
+        # Non-JSON garbage
+        self.assertIsNone(_extract_json_payload("Fatal panic at line 42: null pointer"))
 
     def test_dom_auditor(self):
         dummy_js = """
@@ -83,7 +149,6 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         self.assertTrue(any("postMessage" in f["title"] for f in findings))
 
     def test_engine_bridge_fallbacks(self):
-        # Test surface graph fallback
         endpoints = ["/api/v1/users", "/admin/settings", "/login", "https://cdn.example.com/lib.js"]
         headers = {"Server": "Cloudflare", "X-Powered-By": "Express"}
         content = "<html><head><script src='/_next/static/chunks/main.js'></script></head></html>"
@@ -107,7 +172,8 @@ class TestBlackRouteWebAudit(unittest.TestCase):
                     "endpoint": "https://test-target.cybernest.labs",
                     "evidence": "No header",
                     "confidence": 1.0,
-                    "remediation": "Add header"
+                    "remediation": "Add header",
+                    "curl_command": 'curl -s -I "https://test-target.cybernest.labs"'
                 }
             ],
             "technologies": [{"name": "React", "category": "UI", "evidence": "React DOM"}],
@@ -119,7 +185,6 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         full_pdf_path = os.path.join(test_dir, pdf_file)
         self.assertTrue(os.path.exists(full_pdf_path))
         self.assertTrue(os.path.getsize(full_pdf_path) > 500)
-        # Cleanup
         os.remove(full_pdf_path)
 
 if __name__ == "__main__":
