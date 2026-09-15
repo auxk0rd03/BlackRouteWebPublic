@@ -61,13 +61,17 @@ BlackRoute-Web-Linux_VersionPopOS/
 ## Features and Capabilities
 
 * **Polyglot Compiled Performance (Rust & Go)**: Critical asset parsing and route extraction routines are executed via a compiled Rust engine using linear-time Thompson NFA regexes. Surface topology graph construction and tech fingerprinting run in Go goroutines. Both feature seamless Python fallbacks.
+* **SOC-Friendly Stealth Protocol & Evasion**: Engineered to prevent alarm fatigue and false positives on client perimeters. Uses realistic modern Chrome 124 browser personas with full L7 Client Hints (`Sec-Ch-Ua`, `Sec-Fetch-*`), benign dynamic CORS origin reflection tests (no `evil` tags), Semaphore concurrency limits, and randomized request jitter (250ms–750ms).
+* **Dual Scan Profiles (Stealth vs. Active)**: Defaults to low-noise Stealth Mode (suppressing noisy `/.env` and `/.git` probes) during passive posture audits, with an explicit toggle for Active Verification when intrusive probing is authorized.
+* **WAF & Rate-Limit Circuit Breaker**: Detects HTTP 429 rate-limiting and WAF block signatures (Cloudflare, AWS WAF, Akamai), automatically halting active probes and backing off to avoid escalating SOC incident severity.
+* **Authorized Engagement Whitelisting**: Injects optional `X-Security-Engagement` and `X-Authorized-Audit` headers, allowing client SIEM correlation rules to automatically classify audit traffic as authorized.
 * **Deep Transport & Header Posture Auditing**: Evaluates Content Security Policy (CSP), Strict-Transport-Security (HSTS), CORS origin reflection, X-Frame-Options (Clickjacking), X-Content-Type-Options, Referrer-Policy, and Permissions-Policy.
 * **Session & Cookie Hygiene**: Audits all `Set-Cookie` directives for `Secure`, `HttpOnly`, and `SameSite` compliance.
-* **Client-Side Secret & Token Leakage**: Inspects HTML markup and linked JavaScript bundles for exposed AWS keys, Google API tokens, Stripe keys, GitHub/GitLab tokens, OpenAI keys, JWTs, and database connection URIs.
+* **Client-Side Secret & Token Leakage**: Inspects HTML markup and linked JavaScript bundles with **Shannon Entropy** filtering ($H(X) = -\sum p \log_2 p$) to eliminate false positives on dummy credentials while capturing authentic API keys and secrets.
 * **API Surface & Debug Exposure Detection**: Probes for exposed OpenAPI/Swagger documentation, GraphQL introspection, Spring Boot actuators, environment files (`.env`), and Git metadata (`.git/HEAD`).
 * **DOM Security Analysis**: Analyzes client JavaScript for DOM XSS sinks (`innerHTML`, `eval`, `document.write`) paired with unvalidated sources, as well as unvalidated `postMessage` event listeners.
 * **SSRF Protection & Local Staging Mode**: Hardened against Server-Side Request Forgery with strict RFC 1918 / loopback / cloud metadata IP filtering, with a configurable Local Staging toggle for authorized dev environments.
-* **CyberNest VIDS PDF Audit Reports**: Generates downloadable, styled PDF audit reports detailing findings, threat distribution, evidence, and remediation steps.
+* **CyberNest VIDS PDF Audit Reports**: Generates downloadable, styled PDF audit reports detailing findings, threat distribution, evidence, and reproducible cURL PoC commands.
 * **Threat Intelligence Export**: Supports exporting scan findings directly into authentic **STIX 2.1** JSON bundles and **TAXII 2.1** collection envelopes.
 
 ---

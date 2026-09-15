@@ -120,11 +120,14 @@ BlackRoute-Web-Linux_VersionPopOS/
 ### Core Security & Auditing Layer (`app/core/`)
 
 #### `app/core/config.py`
-- **Role**: Global runtime configuration, path resolution, and constants.
+- **Role**: Global application configuration, path resolution, browser personas, and SOC stealth settings.
 - **What It Does**:
-  - `resource_path(relative_path)`: Resolves absolute paths dynamically for both development mode and frozen PyInstaller standalone execution (`sys._MEIPASS`).
-  - `Settings` class: Defines paths to `STATIC_DIR`, `TEMPLATES_DIR`, `DB_PATH`, `ENGINE_BIN_DIR`, default crawling budgets (`CRAWL_MAX_PAGES = 35`, `CRAWL_TIMEOUT = 15.0`), and the scanning User-Agent string.
-- **How to Modify**: Adjust crawl page budgets, request timeouts, or asset size caps.
+  - `resource_path()`: Dynamically resolves file paths relative to `sys._MEIPASS` when compiled into a PyInstaller binary, or relative to the source tree in development mode.
+  - `Settings`: Defines runtime parameters, database paths (`DB_PATH`), compiled binary directories (`ENGINE_BIN_DIR`), and crawling limits.
+  - `USER_AGENT`: Realistic modern Chrome 124 on Linux browser persona to prevent WAF bot-blocking.
+  - `get_stealth_headers(engagement_id=None)`: Generates authentic modern browser L7 Client Hints (`Sec-Ch-Ua`, `Sec-Ch-Ua-Mobile`, `Sec-Ch-Ua-Platform`, `Sec-Fetch-*`, `Accept-Language`, `Accept-Encoding`, `Upgrade-Insecure-Requests`). Injects authorized audit headers (`X-Security-Engagement`, `X-Authorized-Audit`) if an engagement ID is provided.
+  - Pacing constants: `PROBE_CONCURRENCY_LIMIT = 2`, `PROBE_JITTER_MIN = 0.25s`, `PROBE_JITTER_MAX = 0.75s`, `WAF_COOLDOWN_SECONDS = 5.0s`.
+- **How to Modify**: Tune jitter ranges, concurrency limits, or add new browser personas.
 
 #### `app/core/database.py`
 - **Role**: SQLite persistence layer with automated schema migrations.
@@ -174,12 +177,14 @@ BlackRoute-Web-Linux_VersionPopOS/
 - **How to Modify**: Add checks inside `audit_response_headers()` returning standardized finding dictionaries.
 
 #### `app/core/auditor_api_routes.py`
-- **Role**: Active non-destructive probe for exposed API schemas, actuators, and debug files.
+- **Role**: Active non-destructive probe for exposed API schemas, actuators, and debug files with WAF circuit breaker.
 - **What It Does**:
   - Probes `PROBE_TARGETS`: `/.git/HEAD`, `/.env`, `/openapi.json`, `/swagger.json`, `/actuator/env`, `/actuator/health`, `/phpinfo.php`, `/server-status`.
   - Probes GraphQL endpoints (`/graphql`, `/api/graphql`) with safe introspection query:
     `{"query": "{ __schema { queryType { name } } }"}`. Flags exposed introspection schemas.
-- **How to Modify**: Append new diagnostic route paths and response validation checks to `PROBE_TARGETS`.
+  - **Pacing & Concurrency**: Restricts probe concurrency with `asyncio.Semaphore(settings.PROBE_CONCURRENCY_LIMIT)` and injects randomized jitter (250ms–750ms) before each request to break deterministic burst patterns.
+  - **WAF & Rate-Limit Circuit Breaker**: `is_waf_block(resp)` evaluates HTTP 429 status codes and WAF block signatures (`cf-ray`, `x-amzn-waf-action`, `Server: cloudflare`, `AkamaiGHost`). Automatically halts active probes upon detection to prevent escalating SOC alarm severity.
+- **How to Modify**: Append new diagnostic route paths and response validation checks to `PROBE_TARGETS`, or add signatures to `WAF_SIGNATURE_HEADERS`.
 
 #### `app/core/auditor_dom.py`
 - **Role**: Client-side JavaScript auditor looking for DOM XSS sinks and insecure postMessage listeners.
@@ -200,15 +205,15 @@ BlackRoute-Web-Linux_VersionPopOS/
 #### `app/core/scanner.py`
 - **Role**: Master audit pipeline orchestrator, cURL PoC generator, and real-time SSE broadcaster.
 - **What It Does**:
-  - `generate_curl_poc(finding)`: Synthesizes reproducible, functional `curl` commands for every finding (CORS origin probes, cookie checks, grep-filtered asset downloads, GraphQL introspection requests).
+  - `generate_curl_poc(finding)`: Synthesizes reproducible, functional `curl` commands for every finding using benign origins (`https://origin-verify.<domain>`), cookie checks, grep-filtered asset downloads, and GraphQL introspection requests.
   - `broadcast_log(entry)`: Broadcasts real-time terminal log entries to all connected SSE subscriber queues (`LOG_SUBSCRIBERS`).
   - `WebScanner.run_pipeline()`:
-    1. Validates target and SSRF boundaries.
-    2. Phase 1: Header, cookie, CORS, and transport audit.
-    3. Phase 2: Spidering web assets and client routes via Rust `web_spider`.
+    1. Validates target and SSRF boundaries. Injects `get_stealth_headers(self.engagement_id)`.
+    2. Phase 1: Header, cookie, CORS (using benign origin test), and transport audit. Detects initial WAF response blocks.
+    3. Phase 2: Spidering web assets and client routes via Rust `web_spider` with micro-pacing (50ms).
     4. Phase 3: Secret and credential leak detection with Shannon entropy evaluation.
     5. Phase 4: DOM XSS and postMessage risk analysis.
-    6. Phase 5: API surface and sensitive path probing.
+    6. Phase 5: API surface and sensitive path probing (conditionally executed based on `self.stealth_mode`; suppressed in Stealth Mode to protect client SOC telemetry).
     7. Phase 6: Attack surface topology and stack fingerprinting via Go `surface_graph`.
     8. Phase 7: Generates cURL PoC for all findings, applies smart noise filtering (unless Shadow Mode), generates VIDS PDF report, saves to SQLite, and broadcasts dynamic results grid with 1-click cURL copy buttons.
     9. Zero-Footprint Protocol: Removes temporary asset directories upon completion.
@@ -253,7 +258,7 @@ BlackRoute-Web-Linux_VersionPopOS/
 #### `app/routes/api.py`
 - **Role**: REST API endpoints for scanning, log streaming, and threat intelligence export.
 - **What It Does**:
-  - `POST /api/scan`: Accepts target URL and audit flags, launches `WebScanner.run_pipeline` in background tasks, and returns SSE activation script.
+  - `POST /api/scan`: Accepts target URL, `shadow_mode`, `local_staging`, `auth_header`, `stealth_mode` (default `True`), and `engagement_id`. Launches `WebScanner.run_pipeline` in background tasks and returns SSE activation script.
   - `GET /api/stream-logs-sse`: Server-Sent Events endpoint streaming log events over a persistent connection (`text/event-stream`) with automatic keepalive heartbeats.
   - `GET /api/stream-logs`: Legacy HTTP polling fallback.
   - `GET /api/engines-status`: HTMX fragment displaying live badges for Rust Web Spider, Go Surface Graph, and Python DAST pipeline.
@@ -263,7 +268,7 @@ BlackRoute-Web-Linux_VersionPopOS/
 #### `app/templates/index.html`
 - **Role**: Real-time mission control dashboard.
 - **What It Does**:
-  - **Left Column**: Live engine status badges, target submission form, Shadow Mode toggle, Local Staging Mode toggle, Advanced Auth drawer, and real-time scrolling console log container with live `SSE CONNECTED` indicator.
+  - **Left Column**: Live engine status badges, target submission form, **Stealth Protocol toggle** (enabled by default for low SOC footprint), Shadow Mode toggle, Local Staging Mode toggle, **Authorized Engagement ID input** (`X-Security-Engagement`), Advanced Auth drawer, and real-time scrolling console log container with live `SSE CONNECTED` indicator.
   - **Right Column**: Interactive results grid with severity badges, confidence scores, 1-click `[COPY cURL PoC]` buttons for instant HackerOne triage, expandable command drawers, and one-click report export actions.
   - **Client Script**: Implements native JavaScript `EventSource('/api/stream-logs-sse')` with automatic reconnection and clipboard copy handlers.
 
@@ -391,7 +396,66 @@ BlackRoute-Web-Linux_VersionPopOS/
 
 ---
 
-## 5. Maintenance & Operational Commands
+## 5. SOC-Friendly Architecture & Telemetry Evasion Protocol
+
+A critical design requirement for BlackRoute-Web is preventing alert storms, false positive alarms, and IP bans on client perimeters. Security testing that trips client SOC tripwires wastes defensive analyst hours on triage tickets and creates unnecessary operational friction.
+
+BlackRoute-Web implements a comprehensive, 6-pillar stealth defense architecture:
+
+### 5.1 Modern Browser Persona & L7 Client Hints
+- **The Problem**: Standard scanners use explicit User-Agents (e.g. `User-Agent: Nikto`, `User-Agent: BlackRoute-Web/1.0 (CyberNest Labs Security Auditor)`). WAF rules (such as ModSecurity CRS rule 913100) maintain regex blacklists for these strings and immediately return 403 blocks.
+- **Implementation**: `Settings.get_stealth_headers()` generates realistic Chromium/Chrome 124 browser headers on Linux with full L7 Client Hints:
+  ```python
+  "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  "Sec-Ch-Ua-Mobile": "?0",
+  "Sec-Ch-Ua-Platform": '"Linux"',
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "Upgrade-Insecure-Requests": "1"
+  ```
+  This matches standard browser traffic profiles and prevents automated bot-classification by Cloudflare Bot Management or Akamai Bot Manager.
+
+### 5.2 Benign Dynamic CORS Origin Probing
+- **The Problem**: Probing cross-origin reflection with `Origin: https://evil.cybernest.labs` immediately trips SIEM detection rules looking for keywords like `evil`, `attacker`, or unauthorized TLDs.
+- **Implementation**: In `scanner.py`, origin reflection is tested using a harmless, dynamically constructed subdomain matching the target's own root domain:
+  ```python
+  parsed_host = urllib.parse.urlparse(validated_url).netloc
+  benign_origin = f"https://origin-verify.{parsed_host}"
+  ```
+  The resulting cURL PoC is similarly formatted without alarming keywords, enabling clean reproduction.
+
+### 5.3 Semaphore Concurrency & Randomized Jitter Pacing
+- **The Problem**: Firing multiple sensitive path probes simultaneously (`asyncio.gather(*tasks)`) creates microsecond burst spikes that trigger WAF volumetric anomaly rate limits.
+- **Implementation**: In `auditor_api_routes.py`, requests are bounded by `asyncio.Semaphore(2)` and injected with randomized jitter between `0.25s` and `0.75s`. This breaks statistical burst detection and mimics human navigation latency.
+
+### 5.4 Dual Scan Profiles: Stealth Protocol vs. Active Verification
+- **Stealth Protocol (`stealth_mode=True`, Default)**:
+  - Executes transport evaluation, header audits, cookie hygiene checks, JS asset harvesting, offline Rust Thompson NFA spidering, Shannon entropy credential auditing, and client-side DOM XSS sink analysis.
+  - **Suppresses Phase 5 active path probes** (`/.env`, `/.git/HEAD`, `/actuator/*`, `/phpinfo.php`). This achieves zero 404 alert noise on the client backend during passive posture assessments.
+- **Active Verification Mode (`stealth_mode=False`)**:
+  - Explicitly chosen by the analyst when deep endpoint probing is authorized. Executes paced and jittered probes against sensitive paths.
+
+### 5.5 WAF & Rate-Limit Circuit Breaker
+- **Implementation**: `is_waf_block(resp)` evaluates responses for:
+  - HTTP `429 Too Many Requests` or `503 Service Unavailable`.
+  - HTTP `403 Forbidden` carrying WAF headers (`cf-ray`, `cf-mitigated`, `x-amzn-waf-action`, `Server: cloudflare`, `AkamaiGHost`) or challenge page signatures.
+- **Action**: When detected, the circuit breaker halts further active probes, logs a warning to the SSE stream, and attaches an informative finding rather than continuing to hammer the perimeter and escalating incident severity.
+
+### 5.6 Authorized Engagement Tagging (`X-Security-Engagement`)
+- When assessing client infrastructure with an active SOC, analysts can specify an **Authorized Engagement ID** (e.g., `CN-AUDIT-2026-X`).
+- Outbound requests automatically inject:
+  ```http
+  X-Security-Engagement: CN-AUDIT-2026-X
+  X-Authorized-Audit: true
+  ```
+  This allows client SIEM correlation engines (Splunk, Sentinel, Datadog) to recognize authorized testing traffic and suppress pager-duty alerts.
+
+---
+
+## 6. Maintenance & Operational Commands
 
 ```bash
 # Launch development server locally

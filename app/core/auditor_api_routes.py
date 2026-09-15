@@ -79,75 +79,139 @@ PROBE_TARGETS = [
     }
 ]
 
+import random
+
+WAF_SIGNATURE_HEADERS = [
+    "cf-ray", "cf-mitigated", "x-amzn-waf-action", "x-amzn-errortype",
+    "x-sucuri-id", "x-imperva-id", "x-denied-reason"
+]
+
+def is_waf_block(resp: httpx.Response) -> bool:
+    """Detect if response indicates a WAF block, rate-limit (429), or challenge page."""
+    if resp.status_code in (429, 503):
+        return True
+    if resp.status_code == 403:
+        server = resp.headers.get("server", "").lower()
+        if any(w in server for w in ["cloudflare", "akamai", "imperva", "sucuri", "incapsula"]):
+            return True
+        for h in WAF_SIGNATURE_HEADERS:
+            if h in resp.headers:
+                return True
+        body_lower = resp.text.lower()
+        if any(phrase in body_lower for phrase in ["attention required! | cloudflare", "access denied", "waf block", "request blocked"]):
+            return True
+    return False
+
+
 class ApiRouteAuditor:
     """Probes for exposed API schemas, administrative dashboards, and dangerous debug files."""
 
     @staticmethod
-    async def audit_api_surface(base_url: str, custom_headers: Dict[str, str] = None) -> List[Dict[str, Any]]:
+    async def audit_api_surface(
+        base_url: str,
+        custom_headers: Dict[str, str] = None,
+        concurrency: int = settings.PROBE_CONCURRENCY_LIMIT,
+        jitter_min: float = settings.PROBE_JITTER_MIN,
+        jitter_max: float = settings.PROBE_JITTER_MAX
+    ) -> List[Dict[str, Any]]:
         findings = []
         parsed = urllib.parse.urlparse(base_url)
         origin = f"{parsed.scheme}://{parsed.netloc}"
 
-        headers = {
-            "User-Agent": settings.USER_AGENT,
-            "Accept": "text/html,application/json,*/*"
-        }
+        headers = settings.get_stealth_headers()
         if custom_headers:
             headers.update(custom_headers)
 
+        sem = asyncio.Semaphore(concurrency)
+        waf_detected = False
+
         async with httpx.AsyncClient(headers=headers, verify=False, follow_redirects=True, timeout=8.0) as client:
-            # 1. Run standard sensitive endpoint probes concurrently
+            async def _paced_probe(target: Dict[str, Any], url: str) -> Any:
+                nonlocal waf_detected
+                if waf_detected:
+                    return None
+                async with sem:
+                    # Randomized jitter to break deterministic burst signatures
+                    await asyncio.sleep(random.uniform(jitter_min, jitter_max))
+                    if waf_detected:
+                        return None
+                    try:
+                        resp = await client.get(url)
+                        if is_waf_block(resp):
+                            waf_detected = True
+                            return {
+                                "severity": "LOW",
+                                "category": "API_EXPOSURE",
+                                "title": "WAF / Rate-Limiter Circuit Breaker Engaged",
+                                "description": f"Target returned WAF block/rate-limiting signals (HTTP {resp.status_code}). Active probing was gracefully throttled to prevent triggering client SOC incident escalations.",
+                                "endpoint": url,
+                                "evidence": f"WAF response signature detected on GET {url} -> Status {resp.status_code}",
+                                "confidence": 1.0,
+                                "remediation": "Verify test IP is whitelisted on client WAF/perimeter controls."
+                            }
+                        if target["check"](resp):
+                            return {
+                                "severity": target["severity"],
+                                "category": target["category"],
+                                "title": target["title"],
+                                "description": target["description"],
+                                "endpoint": url,
+                                "evidence": f"GET {url} -> Status {resp.status_code} ({len(resp.content)} bytes). Snippet: {resp.text[:100].strip()}",
+                                "confidence": 0.95,
+                                "remediation": target["remediation"]
+                            }
+                    except Exception:
+                        pass
+                    return None
+
+            # 1. Run standard sensitive endpoint probes with pacing & concurrency bounds
             tasks = []
             for target in PROBE_TARGETS:
                 target_url = urllib.parse.urljoin(origin, target["path"])
-                tasks.append(ApiRouteAuditor._probe_single(client, target, target_url))
+                tasks.append(_paced_probe(target, target_url))
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for res in results:
                 if isinstance(res, dict):
                     findings.append(res)
 
-            # 2. Check GraphQL Introspection
-            graphql_urls = [
-                urllib.parse.urljoin(origin, "/graphql"),
-                urllib.parse.urljoin(origin, "/api/graphql")
-            ]
-            for g_url in graphql_urls:
-                try:
-                    intro_query = {"query": "{ __schema { queryType { name } } }"}
-                    resp = await client.post(g_url, json=intro_query)
-                    if resp.status_code == 200 and "__schema" in resp.text:
-                        findings.append({
-                            "severity": "MEDIUM",
-                            "category": "API_EXPOSURE",
-                            "title": "GraphQL Introspection Enabled",
-                            "description": f"GraphQL endpoint at {g_url} allows introspection queries, allowing full reconstruction of the GraphQL schema, queries, and mutations.",
-                            "endpoint": g_url,
-                            "evidence": f"POST {g_url} -> 200 OK with schema definition snippet: {resp.text[:120]}",
-                            "confidence": 1.0,
-                            "remediation": "Disable GraphQL introspection in production environments."
-                        })
-                        break
-                except Exception:
-                    pass
+            # 2. Check GraphQL Introspection (if WAF circuit breaker has not tripped)
+            if not waf_detected:
+                graphql_urls = [
+                    urllib.parse.urljoin(origin, "/graphql"),
+                    urllib.parse.urljoin(origin, "/api/graphql")
+                ]
+                for g_url in graphql_urls:
+                    try:
+                        await asyncio.sleep(random.uniform(jitter_min, jitter_max))
+                        intro_query = {"query": "{ __schema { queryType { name } } }"}
+                        resp = await client.post(g_url, json=intro_query)
+                        if is_waf_block(resp):
+                            findings.append({
+                                "severity": "LOW",
+                                "category": "API_EXPOSURE",
+                                "title": "WAF Rate-Limiter Detected on GraphQL",
+                                "description": "Target WAF triggered on GraphQL probe. Circuit breaker aborted remaining queries.",
+                                "endpoint": g_url,
+                                "evidence": f"POST {g_url} -> Status {resp.status_code}",
+                                "confidence": 1.0,
+                                "remediation": "Check GraphQL gateway rate limits."
+                            })
+                            break
+                        if resp.status_code == 200 and "__schema" in resp.text:
+                            findings.append({
+                                "severity": "MEDIUM",
+                                "category": "API_EXPOSURE",
+                                "title": "GraphQL Introspection Enabled",
+                                "description": f"GraphQL endpoint at {g_url} allows introspection queries, allowing full reconstruction of the GraphQL schema, queries, and mutations.",
+                                "endpoint": g_url,
+                                "evidence": f"POST {g_url} -> 200 OK with schema definition snippet: {resp.text[:120]}",
+                                "confidence": 1.0,
+                                "remediation": "Disable GraphQL introspection in production environments."
+                            })
+                            break
+                    except Exception:
+                        pass
 
         return findings
 
-    @staticmethod
-    async def _probe_single(client: httpx.AsyncClient, target: Dict[str, Any], url: str) -> Any:
-        try:
-            resp = await client.get(url)
-            if target["check"](resp):
-                return {
-                    "severity": target["severity"],
-                    "category": target["category"],
-                    "title": target["title"],
-                    "description": target["description"],
-                    "endpoint": url,
-                    "evidence": f"GET {url} -> Status {resp.status_code} ({len(resp.content)} bytes). Snippet: {resp.text[:100].strip()}",
-                    "confidence": 0.95,
-                    "remediation": target["remediation"]
-                }
-        except Exception:
-            pass
-        return None

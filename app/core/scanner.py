@@ -44,7 +44,9 @@ def generate_curl_poc(finding: Dict[str, Any]) -> str:
 
     if category == "HEADERS":
         if "cors" in title or "origin" in title:
-            return f'curl -s -i -X GET "{endpoint}" -H "Origin: https://evil.cybernest.labs"'
+            parsed = urllib.parse.urlparse(endpoint)
+            netloc = parsed.netloc or "target.domain"
+            return f'curl -s -i -X GET "{endpoint}" -H "Origin: https://origin-verify.{netloc}"'
         return f'curl -s -I -X GET "{endpoint}"'
 
     elif category == "COOKIES":
@@ -76,13 +78,17 @@ class WebScanner:
         target_url: str,
         shadow_mode: bool = False,
         local_staging: bool = False,
-        auth_header: Optional[str] = None
+        auth_header: Optional[str] = None,
+        stealth_mode: bool = True,
+        engagement_id: Optional[str] = None
     ):
         self.raw_target = target_url
         self.target_url = normalize_target_url(target_url) if target_url else ""
         self.shadow_mode = shadow_mode
         self.local_staging = local_staging
         self.auth_header = auth_header.strip() if auth_header else None
+        self.stealth_mode = stealth_mode
+        self.engagement_id = engagement_id.strip() if engagement_id else None
         self.temp_dir: Optional[str] = None
         self.findings: List[Dict[str, Any]] = []
         self.endpoints: List[Dict[str, Any]] = []
@@ -117,13 +123,12 @@ class WebScanner:
                 self.log(f"Target Validation Aborted: {val_err}", "error")
                 return
 
-            req_headers = {
-                "User-Agent": settings.USER_AGENT,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            }
+            req_headers = settings.get_stealth_headers(engagement_id=self.engagement_id)
             if self.auth_header:
                 req_headers["Authorization"] = self.auth_header
                 self.log("Authenticated Audit Session Configured.", "info")
+            if self.engagement_id:
+                self.log(f"[SOC TAG] Active Engagement Tagging: X-Security-Engagement: {self.engagement_id}", "info")
 
             # 2. Phase 1: Header, Cookie, CORS & Transport Posture Audit
             self.log("Phase 1: Assessing HTTP Headers, Cookies, and Transport Security...", "info")
@@ -134,6 +139,11 @@ class WebScanner:
                     self.pages_crawled += 1
                     status = initial_resp.status_code
                     self.log(f"Target Acquired: HTTP {status} ({len(initial_resp.content)} bytes)", "success")
+
+                    # Check WAF indications on initial response
+                    from app.core.auditor_api_routes import is_waf_block
+                    if is_waf_block(initial_resp):
+                        self.log("[WAF NOTICE] Target returned perimeter defense / rate-limit signals. Engaging stealth throttles.", "warn")
 
                     # Header Audit
                     header_findings = HeaderAuditor.audit_response_headers(str(initial_resp.url), initial_resp.headers, status)
@@ -147,11 +157,13 @@ class WebScanner:
                         self.findings.extend(cookie_findings)
                         self.log(f"Cookie Hygiene Checked: {len(cookie_findings)} security flags raised.", "info")
 
-                    # CORS Audit (test origin reflection)
-                    cors_resp = await client.get(validated_url, headers={"Origin": "https://evil.cybernest.labs"})
+                    # CORS Audit (test origin reflection with benign check origin to prevent SIEM alerts)
+                    parsed_host = urllib.parse.urlparse(validated_url).netloc
+                    benign_origin = f"https://origin-verify.{parsed_host}"
+                    cors_resp = await client.get(validated_url, headers={"Origin": benign_origin})
                     acao = cors_resp.headers.get("access-control-allow-origin", "")
                     acac = cors_resp.headers.get("access-control-allow-credentials", "")
-                    cors_findings = HeaderAuditor.audit_cors(str(initial_resp.url), acao, acac, "https://evil.cybernest.labs")
+                    cors_findings = HeaderAuditor.audit_cors(str(initial_resp.url), acao, acac, benign_origin)
                     self.findings.extend(cors_findings)
 
                 except Exception as net_err:
@@ -180,6 +192,7 @@ class WebScanner:
             downloaded_scripts = []
             async with httpx.AsyncClient(headers=req_headers, verify=False, follow_redirects=True, timeout=10.0) as dl_client:
                 for src in script_srcs[:25]:
+                    await asyncio.sleep(0.05)  # Micro-pacing to prevent burst connection spikes
                     script_url = urllib.parse.urljoin(validated_url, src)
                     try:
                         js_resp = await dl_client.get(script_url)
@@ -233,11 +246,14 @@ class WebScanner:
                 dom_findings_count += len(dom_findings)
             self.log(f"DOM Risk Analysis Complete: {dom_findings_count} sink/origin risks detected.", "info")
 
-            # 6. Phase 5: API Surface & Sensitive Route Discovery
-            self.log("Phase 5: Probing for Exposed OpenAPI/Swagger Schemas, Actuators & Git Metadata...", "info")
-            api_findings = await ApiRouteAuditor.audit_api_surface(validated_url, req_headers)
-            self.findings.extend(api_findings)
-            self.log(f"Surface Probing Complete: {len(api_findings)} exposed services identified.", "success" if len(api_findings) == 0 else "warn")
+            # 6. Phase 5: API Surface & Sensitive Route Discovery (Stealth Protocol vs. Active Mode)
+            if self.stealth_mode:
+                self.log("[STEALTH PROTOCOL] Suppressed intrusive active path probes (/.env, /.git, /actuators) to preserve zero SOC alarm footprint.", "info")
+            else:
+                self.log("Phase 5: Probing for Exposed OpenAPI/Swagger Schemas, Actuators & Git Metadata (Paced & Jittered)...", "info")
+                api_findings = await ApiRouteAuditor.audit_api_surface(validated_url, req_headers)
+                self.findings.extend(api_findings)
+                self.log(f"Surface Probing Complete: {len(api_findings)} exposed services identified.", "success" if len(api_findings) == 0 else "warn")
 
             # 7. Phase 6: Attack Surface Topology & Tech Fingerprinting (Go Engine)
             self.log("Phase 6: Computing Attack Surface Topology & Stack Fingerprints (Go Engine)...", "info")

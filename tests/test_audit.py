@@ -100,7 +100,8 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         }
         curl_cors = generate_curl_poc(f_cors)
         self.assertIn("curl", curl_cors)
-        self.assertIn("Origin: https://evil.cybernest.labs", curl_cors)
+        self.assertIn("Origin: https://origin-verify.api.example.com", curl_cors)
+        self.assertNotIn("evil", curl_cors)
 
         f_secret = {
             "category": "SECRETS",
@@ -119,6 +120,38 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         }
         curl_graphql = generate_curl_poc(f_graphql)
         self.assertIn("__schema", curl_graphql)
+
+    def test_stealth_headers_and_client_hints(self):
+        from app.core.config import settings
+        headers = settings.get_stealth_headers(engagement_id="CN-AUDIT-2026-X")
+        self.assertIn("Mozilla/5.0", headers["User-Agent"])
+        self.assertIn("Chrome/124", headers["User-Agent"])
+        self.assertIn("Sec-Ch-Ua", headers)
+        self.assertIn("Sec-Fetch-Dest", headers)
+        self.assertEqual(headers.get("X-Security-Engagement"), "CN-AUDIT-2026-X")
+        self.assertEqual(headers.get("X-Authorized-Audit"), "true")
+
+    def test_waf_block_detection(self):
+        from app.core.auditor_api_routes import is_waf_block
+        # 429 Rate limited
+        r_429 = httpx.Response(429, request=httpx.Request("GET", "https://example.com"))
+        self.assertTrue(is_waf_block(r_429))
+
+        # 403 with Cloudflare cf-ray
+        r_cf = httpx.Response(403, headers={"cf-ray": "123456", "server": "cloudflare"}, request=httpx.Request("GET", "https://example.com"))
+        self.assertTrue(is_waf_block(r_cf))
+
+        # 403 with AWS WAF action
+        r_aws = httpx.Response(403, headers={"x-amzn-waf-action": "block"}, request=httpx.Request("GET", "https://example.com"))
+        self.assertTrue(is_waf_block(r_aws))
+
+        # Normal 404
+        r_404 = httpx.Response(404, request=httpx.Request("GET", "https://example.com"))
+        self.assertFalse(is_waf_block(r_404))
+
+        # Normal 200
+        r_200 = httpx.Response(200, text="OK", request=httpx.Request("GET", "https://example.com"))
+        self.assertFalse(is_waf_block(r_200))
 
     def test_resilient_json_extraction(self):
         # Direct clean JSON

@@ -21,7 +21,9 @@ async def start_scan(
     target_url: str = Form(...),
     shadow_mode: bool = Form(False),
     local_staging: bool = Form(False),
-    auth_header: Optional[str] = Form(None)
+    auth_header: Optional[str] = Form(None),
+    stealth_mode: bool = Form(True),
+    engagement_id: Optional[str] = Form(None)
 ):
     """
     Receives target web URL from UI form and starts background audit pipeline.
@@ -33,7 +35,9 @@ async def start_scan(
         target_url=clean_url,
         shadow_mode=shadow_mode,
         local_staging=local_staging,
-        auth_header=auth_header
+        auth_header=auth_header,
+        stealth_mode=stealth_mode,
+        engagement_id=engagement_id
     )
 
     background_tasks.add_task(scanner.run_pipeline)

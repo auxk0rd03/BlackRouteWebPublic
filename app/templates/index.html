@@ -20,6 +20,10 @@
 
                 <div class="options-group" style="margin-top: 14px; font-size: 0.82em; color: var(--text-secondary); display: flex; flex-direction: column; gap: 8px;">
                     <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="stealth_mode" name="stealth_mode" checked style="cursor: pointer;">
+                        <label for="stealth_mode" style="cursor: pointer; color: var(--accent-color); font-weight: 600;">Enable Stealth Protocol (Passive Recon &amp; Rate Jitter — Low SOC Footprint)</label>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
                         <input type="checkbox" id="shadow_mode" name="shadow_mode" style="cursor: pointer;">
                         <label for="shadow_mode" style="cursor: pointer;">Enable Shadow Architecture (Retain low-entropy secrets &amp; raw findings)</label>
                     </div>
@@ -30,8 +34,12 @@
                 </div>
 
                 <details style="margin-top: 12px; font-size: 0.82em; color: var(--text-secondary);">
-                    <summary style="cursor: pointer; font-weight: 600;">[+] Advanced Authentication &amp; Headers</summary>
+                    <summary style="cursor: pointer; font-weight: 600;">[+] Advanced Authentication &amp; Engagement Headers</summary>
                     <div style="margin-top: 8px;">
+                        <label for="engagement_id" style="display: block; margin-bottom: 4px;">Authorized Engagement ID (X-Security-Engagement for SOC Whitelisting):</label>
+                        <input type="text" id="engagement_id" name="engagement_id" placeholder="CN-AUDIT-2026-X" style="width: 100%; margin-bottom: 8px;">
+                    </div>
+                    <div style="margin-top: 4px;">
                         <label for="auth_header" style="display: block; margin-bottom: 4px;">Authorization Header (Bearer / Token / Cookie):</label>
                         <input type="text" id="auth_header" name="auth_header" placeholder="Bearer eyJhbGciOi..." style="width: 100%;">
                     </div>

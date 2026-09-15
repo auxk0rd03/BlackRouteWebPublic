@@ -86,7 +86,14 @@ class TestPipelineE2E(unittest.IsolatedAsyncioTestCase):
 
     async def test_full_web_scan_pipeline(self):
         target = "http://127.0.0.1:18888"
-        scanner = WebScanner(target_url=target, shadow_mode=True, local_staging=True)
+        # Test Active Mode (stealth_mode=False) to verify active API exposure probes
+        scanner = WebScanner(
+            target_url=target,
+            shadow_mode=True,
+            local_staging=True,
+            stealth_mode=False,
+            engagement_id="CN-TEST-ENGAGE"
+        )
 
         await scanner.run_pipeline()
 
@@ -122,5 +129,27 @@ class TestPipelineE2E(unittest.IsolatedAsyncioTestCase):
         taxii_data = json.loads(taxii_resp.body.decode("utf-8"))
         self.assertIn("objects", taxii_data)
 
+    async def test_stealth_mode_suppression(self):
+        """Verify that Stealth Protocol suppresses intrusive Phase 5 active path probes."""
+        target = "http://127.0.0.1:18888"
+        stealth_scanner = WebScanner(
+            target_url=target,
+            shadow_mode=True,
+            local_staging=True,
+            stealth_mode=True
+        )
+
+        await stealth_scanner.run_pipeline()
+
+        cats = {f["category"] for f in stealth_scanner.findings}
+        # In stealth mode, sensitive route probes (/.git, /actuator, .env) must NOT be executed
+        self.assertNotIn("API_EXPOSURE", cats, "Stealth mode must suppress noisy API_EXPOSURE probes")
+        # Non-intrusive checks should still pass
+        self.assertIn("HEADERS", cats)
+        self.assertIn("COOKIES", cats)
+        self.assertIn("SECRETS", cats)
+        self.assertIn("DOM_XSS", cats)
+
 if __name__ == "__main__":
     unittest.main()
+
