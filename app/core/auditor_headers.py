@@ -323,7 +323,8 @@ class HeaderAuditor:
                     "endpoint": url,
                     "evidence": f"Reflected Origin: {acao} (Credentials allowed: {acac})",
                     "confidence": 0.95,
-                    "remediation": "Validate the incoming Origin header against an immutable server-side whitelist before returning Access-Control-Allow-Origin."
+                    "remediation": "Validate the incoming Origin header against an immutable server-side whitelist before returning Access-Control-Allow-Origin.",
+                    "tested_origin": tested_origin
                 })
 
         return findings

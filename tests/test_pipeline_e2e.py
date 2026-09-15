@@ -150,6 +150,34 @@ class TestPipelineE2E(unittest.IsolatedAsyncioTestCase):
         self.assertIn("SECRETS", cats)
         self.assertIn("DOM_XSS", cats)
 
+    async def test_decoupled_scan_and_on_demand_reporting(self):
+        """Verify that scan completes without PDF when generate_pdf=False, and report can be compiled on-demand."""
+        from app.routes.api import generate_report_for_scan
+        import json
+        target = "http://127.0.0.1:18888"
+        decoupled_scanner = WebScanner(
+            target_url=target,
+            shadow_mode=True,
+            local_staging=True,
+            stealth_mode=True,
+            generate_pdf=False
+        )
+
+        await decoupled_scanner.run_pipeline()
+        self.assertTrue(len(decoupled_scanner.findings) > 0)
+
+        # Confirm scan record exists in database
+        scan, findings, _ = get_latest_scan_findings()
+        self.assertIsNotNone(scan)
+        self.assertEqual(scan["report_file"], "", "Report file should be empty during decoupled scan")
+
+        # Compile report on-demand via API handler
+        res = await generate_report_for_scan(scan["id"])
+        data = json.loads(res.body.decode())
+        self.assertEqual(data["status"], "success")
+        self.assertTrue(data["report_file"].endswith(".pdf"))
+        self.assertIn("/static/", data["download_url"])
+
 if __name__ == "__main__":
     unittest.main()
 

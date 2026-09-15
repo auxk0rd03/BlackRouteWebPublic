@@ -148,3 +148,32 @@ def get_latest_scan_findings() -> Tuple[Optional[Dict[str, Any]], List[Dict[str,
 
     conn.close()
     return scan, findings, endpoints
+
+def get_scan_by_id(scan_id: int) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Retrieve a specific scan record, its findings, and endpoints by ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM scans WHERE id = ?", (scan_id,))
+    scan_row = cursor.fetchone()
+    if not scan_row:
+        conn.close()
+        return None, [], []
+
+    scan = dict(scan_row)
+    cursor.execute("SELECT * FROM findings WHERE scan_id = ? ORDER BY id ASC", (scan["id"],))
+    findings = [dict(row) for row in cursor.fetchall()]
+
+    cursor.execute("SELECT * FROM endpoints WHERE scan_id = ? ORDER BY id ASC", (scan["id"],))
+    endpoints = [dict(row) for row in cursor.fetchall()]
+
+    conn.close()
+    return scan, findings, endpoints
+
+def update_scan_report_file(scan_id: int, report_file: str) -> None:
+    """Update report_file field for an existing scan record."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE scans SET report_file = ? WHERE id = ?", (report_file, scan_id))
+    conn.commit()
+    conn.close()
+

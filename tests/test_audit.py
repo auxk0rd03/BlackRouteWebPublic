@@ -63,6 +63,30 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         self.assertEqual(findings[0]["severity"], "CRITICAL")
         self.assertIn("misconfiguration breaks", findings[0]["description"])
 
+    def test_cors_dynamic_origin_reflection(self):
+        # Dynamic reflection of randomized benign origin with credentials
+        random_origin = "https://probe-d8f9a2.example.com"
+        findings = HeaderAuditor.audit_cors(
+            "https://example.com/api",
+            acao_header=random_origin,
+            acac_header="true",
+            tested_origin=random_origin
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "CRITICAL")
+        self.assertIn("Insecure Origin Reflection with Credentials", findings[0]["title"])
+        self.assertEqual(findings[0]["tested_origin"], random_origin)
+
+        # Dynamic reflection without credentials -> HIGH severity
+        findings_nocred = HeaderAuditor.audit_cors(
+            "https://example.com/api",
+            acao_header=random_origin,
+            acac_header="false",
+            tested_origin=random_origin
+        )
+        self.assertEqual(len(findings_nocred), 1)
+        self.assertEqual(findings_nocred[0]["severity"], "HIGH")
+
     def test_shannon_entropy_calculation(self):
         # Repetitive strings have near-zero entropy
         low_ent = calculate_shannon_entropy("AKIAAAAAAAAAAAAAAAAA")
@@ -232,6 +256,37 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         self.assertTrue(os.path.exists(full_pdf_path))
         self.assertTrue(os.path.getsize(full_pdf_path) > 500)
         os.remove(full_pdf_path)
+
+    def test_database_get_scan_by_id_and_update(self):
+        from app.core.database import save_scan_record, get_scan_by_id, update_scan_report_file
+        scan_id = save_scan_record(
+            target_url="https://app.test.local",
+            findings=[{"severity": "HIGH", "category": "HEADERS", "title": "Test Finding"}],
+            endpoints=[{"url": "https://app.test.local/login"}],
+            pages_crawled=2,
+            report_file=""
+        )
+        self.assertIsNotNone(scan_id)
+        scan, findings, endpoints = get_scan_by_id(scan_id)
+        self.assertEqual(scan["id"], scan_id)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(len(endpoints), 1)
+
+        update_scan_report_file(scan_id, "test_report.pdf")
+        scan_updated, _, _ = get_scan_by_id(scan_id)
+        self.assertEqual(scan_updated["report_file"], "test_report.pdf")
+
+    def test_curl_poc_with_tested_origin(self):
+        finding = {
+            "severity": "CRITICAL",
+            "category": "HEADERS",
+            "title": "CORS Insecure Origin Reflection with Credentials",
+            "endpoint": "https://api.test.local/v1/user",
+            "tested_origin": "https://probe-9988aabb.test.local"
+        }
+        curl_cmd = generate_curl_poc(finding)
+        self.assertIn("https://probe-9988aabb.test.local", curl_cmd)
+        self.assertIn("api.test.local/v1/user", curl_cmd)
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,7 @@ import html
 import os
 import shutil
 import tempfile
+import secrets
 import urllib.parse
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
@@ -44,9 +45,12 @@ def generate_curl_poc(finding: Dict[str, Any]) -> str:
 
     if category == "HEADERS":
         if "cors" in title or "origin" in title:
-            parsed = urllib.parse.urlparse(endpoint)
-            netloc = parsed.netloc or "target.domain"
-            return f'curl -s -i "{endpoint}" -H "Origin: https://origin-verify.{netloc}"'
+            tested_origin = finding.get("tested_origin")
+            if not tested_origin:
+                parsed = urllib.parse.urlparse(endpoint)
+                netloc = parsed.netloc or "target.domain"
+                tested_origin = f"https://origin-verify.{netloc}"
+            return f'curl -s -i "{endpoint}" -H "Origin: {tested_origin}"'
         return f'curl -s -I "{endpoint}"'
 
     elif category == "COOKIES":
@@ -95,7 +99,8 @@ class WebScanner:
         local_staging: bool = False,
         auth_header: Optional[str] = None,
         stealth_mode: bool = True,
-        engagement_id: Optional[str] = None
+        engagement_id: Optional[str] = None,
+        generate_pdf: bool = True
     ):
         self.raw_target = target_url
         self.target_url = normalize_target_url(target_url) if target_url else ""
@@ -104,6 +109,7 @@ class WebScanner:
         self.auth_header = auth_header.strip() if auth_header else None
         self.stealth_mode = stealth_mode
         self.engagement_id = engagement_id.strip() if engagement_id else None
+        self.generate_pdf = generate_pdf
         self.temp_dir: Optional[str] = None
         self.findings: List[Dict[str, Any]] = []
         self.endpoints: List[Dict[str, Any]] = []
@@ -172,9 +178,10 @@ class WebScanner:
                         self.findings.extend(cookie_findings)
                         self.log(f"Cookie Hygiene Checked: {len(cookie_findings)} security flags raised.", "info")
 
-                    # CORS Audit (test origin reflection with benign check origin to prevent SIEM alerts)
+                    # CORS Dynamic Audit (actively test origin reflection with randomized benign probe origin to prevent SIEM alerts)
                     parsed_host = urllib.parse.urlparse(validated_url).netloc
-                    benign_origin = f"https://origin-verify.{parsed_host}"
+                    probe_nonce = secrets.token_hex(4)
+                    benign_origin = f"https://probe-{probe_nonce}.{parsed_host}"
                     cors_resp = await client.get(validated_url, headers={"Origin": benign_origin})
                     acao = cors_resp.headers.get("access-control-allow-origin", "")
                     acac = cors_resp.headers.get("access-control-allow-credentials", "")
@@ -317,14 +324,18 @@ class WebScanner:
                 "risk_score": holistic_risk
             }
 
-            loop = asyncio.get_running_loop()
-            report_file = await loop.run_in_executor(
-                None,
-                generate_web_report,
-                report_data,
-                str(settings.STATIC_DIR)
-            )
-            self.log(f"VIDS PDF Report Generated: {report_file}", "success")
+            report_file = ""
+            if self.generate_pdf:
+                loop = asyncio.get_running_loop()
+                report_file = await loop.run_in_executor(
+                    None,
+                    generate_web_report,
+                    report_data,
+                    str(settings.STATIC_DIR)
+                )
+                self.log(f"VIDS PDF Report Generated: {report_file}", "success")
+            else:
+                self.log("Phase 7: Decoupled Reporting Mode Active — PDF Compilation Deferred (Available On-Demand).", "info")
 
             # Persist to SQLite
             try:
@@ -360,6 +371,10 @@ class WebScanner:
         info_count = sum(1 for f in self.findings if f.get("severity") == "INFO")
 
         safe_report = html.escape(report_file)
+        if report_file:
+            report_btn_html = f'<a href="/static/{safe_report}" target="_blank" class="btn btn-download">[ ACCESS VIDS AUDIT REPORT ]</a>'
+        else:
+            report_btn_html = '<a href="/api/export/report-latest" target="_blank" class="btn btn-download">[ GENERATE VIDS AUDIT REPORT ]</a>'
 
         tech_badges = "".join([
             f'<span style="background: rgba(95,168,160,0.15); border: 1px solid var(--accent-color); padding: 2px 6px; font-size: 0.75em; border-radius: 3px; margin-right: 4px;">{html.escape(t.get("name", ""))}</span>'
@@ -446,7 +461,7 @@ class WebScanner:
 
                 <div class="report-generation" style="margin-top: auto; padding-top: 15px; border-top: 1px solid var(--border-secondary); text-align: center;">
                     <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
-                        <a href="/static/{safe_report}" target="_blank" class="btn btn-download">[ ACCESS VIDS AUDIT REPORT ]</a>
+                        {report_btn_html}
                         <a href="/api/export/stix" class="btn">Export STIX 2.1</a>
                         <a href="/api/export/taxii" class="btn">Export TAXII</a>
                     </div>

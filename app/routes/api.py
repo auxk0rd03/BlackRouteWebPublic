@@ -8,9 +8,11 @@ from typing import Optional
 from fastapi import APIRouter, Form, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-from app.core.database import get_latest_scan_findings
+from app.core.database import get_latest_scan_findings, get_scan_by_id, update_scan_report_file
+from app.core.config import settings
 from app.core.engine_bridge import engine_available
 from app.core.scanner import WebScanner, SCAN_LOGS, LOG_SUBSCRIBERS
+from Sources.Utilities.vids_pdf_gen import generate_web_report
 
 router = APIRouter()
 logs_lock = threading.Lock()
@@ -209,3 +211,69 @@ async def export_taxii():
         content=taxii_envelope,
         headers={"Content-Disposition": "attachment; filename=blackroute_web_taxii_collection.json"}
     )
+
+@router.post("/scans/{scan_id}/report")
+@router.get("/scans/{scan_id}/report")
+async def generate_report_for_scan(scan_id: int):
+    """
+    Decoupled on-demand VIDS PDF report compiler for any historical or completed scan.
+    Enables reporting engine to execute independently from detection engine.
+    """
+    scan, findings, endpoints = get_scan_by_id(scan_id)
+    if not scan:
+        return JSONResponse(status_code=404, content={"error": f"Scan ID {scan_id} not found."})
+
+    crit_count = sum(1 for f in findings if f.get("severity") == "CRITICAL")
+    high_count = sum(1 for f in findings if f.get("severity") == "HIGH")
+    med_count = sum(1 for f in findings if f.get("severity") == "MEDIUM")
+    low_count = sum(1 for f in findings if f.get("severity") == "LOW")
+    finding_impact = (crit_count * 25) + (high_count * 15) + (med_count * 5) + (low_count * 2)
+    risk_score = min(100, max(20, finding_impact)) if findings else 15
+
+    sensitive_routes = [e["url"] for e in endpoints if any(s in e["url"] for s in ["/admin", "/api", "/auth", "/login", "/config"])]
+
+    report_data = {
+        "target_url": scan["target_url"],
+        "pages_crawled": scan["pages_crawled"],
+        "endpoints_found": scan["endpoints_found"],
+        "findings": findings,
+        "technologies": [],
+        "sensitive_routes": sensitive_routes,
+        "risk_score": risk_score
+    }
+
+    loop = asyncio.get_running_loop()
+    report_file = await loop.run_in_executor(
+        None,
+        generate_web_report,
+        report_data,
+        str(settings.STATIC_DIR)
+    )
+    update_scan_report_file(scan_id, report_file)
+
+    return JSONResponse({
+        "status": "success",
+        "scan_id": scan_id,
+        "report_file": report_file,
+        "download_url": f"/static/{report_file}"
+    })
+
+@router.get("/export/report-latest")
+async def export_latest_report():
+    """Generates and redirects to the PDF audit report for the most recent scan."""
+    from fastapi.responses import RedirectResponse
+    scan, _, _ = get_latest_scan_findings()
+    if not scan:
+        return JSONResponse(status_code=404, content={"error": "No scan records found."})
+
+    if scan.get("report_file") and (settings.STATIC_DIR / scan["report_file"]).exists():
+        return RedirectResponse(f"/static/{scan['report_file']}")
+
+    res = await generate_report_for_scan(scan["id"])
+    if isinstance(res, JSONResponse):
+        import json
+        body = json.loads(res.body.decode())
+        if "download_url" in body:
+            return RedirectResponse(body["download_url"])
+    return res
+

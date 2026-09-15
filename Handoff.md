@@ -418,14 +418,19 @@ BlackRoute-Web implements a comprehensive, 6-pillar stealth defense architecture
   ```
   This matches standard browser traffic profiles and prevents automated bot-classification by Cloudflare Bot Management or Akamai Bot Manager.
 
-### 5.2 Benign Dynamic CORS Origin Probing
-- **The Problem**: Probing cross-origin reflection with `Origin: https://evil.cybernest.labs` immediately trips SIEM detection rules looking for keywords like `evil`, `attacker`, or unauthorized TLDs.
-- **Implementation**: In `scanner.py`, origin reflection is tested using a harmless, dynamically constructed subdomain matching the target's own root domain:
+### 5.2 Randomized Dynamic CORS Origin Probing
+- **The Problem**: Probing cross-origin reflection with `Origin: https://evil.cybernest.labs` immediately trips SIEM detection rules looking for keywords like `evil`, `attacker`, or unauthorized TLDs. Conversely, static origin checks risk false positives if a server has an unverified, static test rule configured.
+- **Implementation**: In `scanner.py`, origin reflection is actively tested using an ephemeral, dynamically randomized subdomain probe with a cryptographic nonce matching the target's root domain:
   ```python
   parsed_host = urllib.parse.urlparse(validated_url).netloc
-  benign_origin = f"https://origin-verify.{parsed_host}"
+  probe_nonce = secrets.token_hex(4)
+  benign_origin = f"https://probe-{probe_nonce}.{parsed_host}"
+  cors_resp = await client.get(validated_url, headers={"Origin": benign_origin})
   ```
-  The resulting cURL PoC is similarly formatted without alarming keywords, enabling clean reproduction.
+  This proves the backend dynamically reflects untrusted incoming origins in real time rather than matching a static whitelist. The resulting cURL PoC is generated with the exact tested origin for authentic reproducibility:
+  ```bash
+  curl -s -i "https://target.domain/api" -H "Origin: https://probe-a1b2c3d4.target.domain"
+  ```
 
 ### 5.3 Semaphore Concurrency & Randomized Jitter Pacing
 - **The Problem**: Firing multiple sensitive path probes simultaneously (`asyncio.gather(*tasks)`) creates microsecond burst spikes that trigger WAF volumetric anomaly rate limits.
@@ -451,7 +456,24 @@ BlackRoute-Web implements a comprehensive, 6-pillar stealth defense architecture
   X-Security-Engagement: CN-AUDIT-2026-X
   X-Authorized-Audit: true
   ```
-  This allows client SIEM correlation engines (Splunk, Sentinel, Datadog) to recognize authorized testing traffic and suppress pager-duty alerts.
+### 5.7 Decoupled Reporting Engine & Asynchronous Architecture
+- **Non-Blocking Thread Pool Offloading**:
+  - The core audit pipeline runs within Python's asynchronous event loop (`asyncio`).
+  - Generating comprehensive VIDS PDF audit reports involves compute-intensive layout formatting (coordinate checks, string sanitization to Latin-1, multi-cell auto-wrapping, and disk I/O).
+  - Rather than blocking the event loop or stalling SSE telemetry streaming, `scanner.py` offloads PDF generation to a separate OS worker thread:
+    ```python
+    loop = asyncio.get_running_loop()
+    report_file = await loop.run_in_executor(
+        None,
+        generate_web_report,
+        report_data,
+        str(settings.STATIC_DIR)
+    )
+    ```
+- **Optional Headless / Decoupled Execution**:
+  - `WebScanner(generate_pdf=False)` allows automated CI/CD sweeps or large-target scans to persist findings directly to SQLite and return immediately without generating PDF artifacts.
+- **On-Demand Report Compilation**:
+  - Any historical or completed scan can have its VIDS PDF report compiled on-demand via the dedicated endpoint `POST /api/scans/{scan_id}/report`, decoupling reporting latency entirely from high-throughput network auditing.
 
 ---
 
