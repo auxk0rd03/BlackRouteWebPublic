@@ -83,6 +83,10 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
         pdf.ln(6)
     else:
         for f in findings:
+            # Avoid orphan finding headers by checking if there is enough vertical space
+            if pdf.get_y() > 230:
+                pdf.add_page()
+
             sev = f.get("severity", "INFO").upper()
             title = f.get("title", "Finding")
             cat = f.get("category", "GENERAL")
@@ -123,13 +127,18 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
     # 3. Sensitive Routes Inventory
     sensitive_routes = data.get("sensitive_routes", [])
     if sensitive_routes:
-        pdf.add_page()
+        if pdf.get_y() > 220:
+            pdf.add_page()
+        else:
+            pdf.ln(4)
         pdf.set_font("Courier", 'B', 11)
         pdf.set_text_color(0, 0, 0)
         pdf.cell(0, 8, sanitize("== SENSITIVE ROUTE ATTACK SURFACE =="))
         pdf.ln(7)
         pdf.set_font("Courier", size=8)
         for r in sensitive_routes[:40]:
+            if pdf.get_y() > 265:
+                pdf.add_page()
             pdf.cell(0, 5, sanitize(f"  * {r}"))
             pdf.ln(5)
 

@@ -21,7 +21,8 @@ class DomAuditor:
         r'location\.href',
         r'document\.URL',
         r'document\.referrer',
-        r'window\.name'
+        r'window\.name',
+        r'(?:event|e|msg)\.data'
     ]
 
     @staticmethod
@@ -48,7 +49,8 @@ class DomAuditor:
                     "endpoint": url,
                     "evidence": f"Listener snippet: {snippet}...",
                     "confidence": 0.9,
-                    "remediation": "Validate the incoming event origin against a strict list of allowed domains (e.g. `if (event.origin !== 'https://trusted.com') return;`)."
+                    "remediation": "Validate the incoming event origin against a strict list of allowed domains (e.g. `if (event.origin !== 'https://trusted.com') return;`).",
+                    "search_hint": "addEventListener('message'"
                 })
                 break
 
@@ -68,11 +70,12 @@ class DomAuditor:
                     "severity": "HIGH",
                     "category": "DOM_XSS",
                     "title": "DOM-Based XSS Sink & Source Correlation",
-                    "description": "User-controlled DOM source (e.g. location.search/hash) is directly fed into an execution sink (innerHTML/eval/document.write) on the same execution line.",
+                    "description": "User-controlled DOM source (e.g. location.search/hash, event.data) is directly fed into an execution sink (innerHTML/eval/document.write) on the same execution line.",
                     "endpoint": url,
                     "evidence": f"Line {idx + 1}: {line_str[:140]}",
                     "confidence": 0.85,
-                    "remediation": "Sanitize user inputs using DOMPurify or replace innerHTML with textContent/innerText."
+                    "remediation": "Sanitize user inputs using DOMPurify or replace innerHTML with textContent/innerText.",
+                    "search_hint": line_str[:30]
                 })
                 if len(findings) >= 3:
                     break

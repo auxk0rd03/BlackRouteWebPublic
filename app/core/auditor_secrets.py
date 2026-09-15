@@ -176,7 +176,9 @@ class SecretAuditor:
                     "endpoint": source_url,
                     "evidence": f"Pattern: {rule['id']} | Token: {obfuscated} | Entropy: {entropy} bits/char (Threshold: {min_ent}) | Context: {snippet[:120]}",
                     "confidence": conf,
-                    "remediation": rule["remediation"]
+                    "remediation": rule["remediation"],
+                    "search_hint": secret_text[:8] if len(secret_text) >= 8 else secret_text,
+                    "rule_id": rule["id"]
                 })
                 # Avoid flooding with duplicates of the exact same token in the same file
                 break

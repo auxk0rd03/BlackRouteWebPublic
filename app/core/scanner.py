@@ -46,30 +46,45 @@ def generate_curl_poc(finding: Dict[str, Any]) -> str:
         if "cors" in title or "origin" in title:
             parsed = urllib.parse.urlparse(endpoint)
             netloc = parsed.netloc or "target.domain"
-            return f'curl -s -i -X GET "{endpoint}" -H "Origin: https://origin-verify.{netloc}"'
-        return f'curl -s -I -X GET "{endpoint}"'
+            return f'curl -s -i "{endpoint}" -H "Origin: https://origin-verify.{netloc}"'
+        return f'curl -s -I "{endpoint}"'
 
     elif category == "COOKIES":
-        return f'curl -s -I -X GET "{endpoint}" | grep -i "set-cookie"'
+        return f'curl -s -I "{endpoint}" | grep -i "set-cookie"'
 
     elif category == "SECRETS":
-        evidence = finding.get("evidence", "")
-        token_hint = ""
-        if "Token: " in evidence:
-            token_part = evidence.split("Token: ")[1].split(" |")[0].replace("*", "")
-            if token_part:
-                token_hint = f' | grep -C 2 "{token_part}"'
-        return f'curl -s "{endpoint}"{token_hint}'
+        search_hint = finding.get("search_hint", "")
+        if not search_hint:
+            evidence = finding.get("evidence", "")
+            if "AWS_KEY" in evidence:
+                search_hint = "AKIA"
+            elif "STRIPE_SECRET" in evidence:
+                search_hint = "sk_live_"
+            elif "OPENAI" in evidence:
+                search_hint = "sk-"
+            elif "GITHUB" in evidence:
+                search_hint = "ghp_"
+            elif "GOOGLE" in evidence:
+                search_hint = "AIza"
+        if search_hint:
+            return f'curl -s "{endpoint}" | grep -n -C 2 "{search_hint}"'
+        return f'curl -s "{endpoint}"'
 
     elif category == "API_EXPOSURE":
         if "graphql" in title or "introspection" in title:
             return f'curl -s -X POST "{endpoint}" -H "Content-Type: application/json" -d \'{{"query": "{{ __schema {{ queryType {{ name }} }} }}"}}\''
-        return f'curl -s -i -X GET "{endpoint}"'
+        return f'curl -s -i "{endpoint}"'
 
     elif category == "DOM_XSS":
-        return f'curl -s "{endpoint}"'
+        search_hint = finding.get("search_hint", "")
+        if not search_hint:
+            if "postmessage" in title:
+                search_hint = "addEventListener"
+            else:
+                search_hint = "innerHTML"
+        return f'curl -s "{endpoint}" | grep -n -C 3 "{search_hint}"'
 
-    return f'curl -s -i -X GET "{endpoint}"'
+    return f'curl -s -i "{endpoint}"'
 
 
 class WebScanner:
@@ -281,6 +296,17 @@ class WebScanner:
 
             # 10. Phase 7: Reporting & SQLite Persistence
             self.log("Phase 7: Generating CyberNest VIDS PDF Audit Report...", "info")
+
+            # Calculate Holistic Composite Risk Score (0 - 100) based on findings and attack surface
+            base_surface_score = surface_data.get("risk_score", 15)
+            crit_count = sum(1 for f in self.findings if f.get("severity") == "CRITICAL")
+            high_count = sum(1 for f in self.findings if f.get("severity") == "HIGH")
+            med_count = sum(1 for f in self.findings if f.get("severity") == "MEDIUM")
+            low_count = sum(1 for f in self.findings if f.get("severity") == "LOW")
+
+            finding_impact = (crit_count * 25) + (high_count * 15) + (med_count * 5) + (low_count * 2)
+            holistic_risk = min(100, max(base_surface_score, (base_surface_score // 2) + finding_impact)) if self.findings else base_surface_score
+
             report_data = {
                 "target_url": validated_url,
                 "pages_crawled": self.pages_crawled,
@@ -288,7 +314,7 @@ class WebScanner:
                 "findings": self.findings,
                 "technologies": techs,
                 "sensitive_routes": surface_data.get("sensitive_routes", []),
-                "risk_score": surface_data.get("risk_score", 20)
+                "risk_score": holistic_risk
             }
 
             loop = asyncio.get_running_loop()

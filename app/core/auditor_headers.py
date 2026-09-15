@@ -121,13 +121,14 @@ class HeaderAuditor:
         # 4. X-Content-Type-Options
         xcto = h_lower.get("x-content-type-options")
         if not xcto or "nosniff" not in xcto.lower():
+            evidence_str = f"X-Content-Type-Options: {xcto}" if xcto else "Header 'X-Content-Type-Options' not found in response."
             findings.append({
                 "severity": "LOW",
                 "category": "HEADERS",
                 "title": "Missing X-Content-Type-Options: nosniff",
                 "description": "Browsers may attempt MIME-type sniffing on responses, leading to script execution from non-script content types.",
                 "endpoint": url,
-                "evidence": f"X-Content-Type-Options: {xcto or 'None'}",
+                "evidence": evidence_str,
                 "confidence": 1.0,
                 "remediation": "Configure web server to return 'X-Content-Type-Options: nosniff'."
             })
@@ -215,6 +216,21 @@ class HeaderAuditor:
             cookie_name = name_val.split("=")[0].strip()
             flags = {p.lower().split("=")[0].strip(): (p.split("=")[1].strip() if "=" in p else True) for p in parts[1:]}
 
+            # Insecure cleartext HTTP cookie check
+            if not is_https:
+                is_sensitive = any(kw in cookie_name.lower() for kw in ["sess", "auth", "token", "jwt", "id", "login", "key"])
+                if is_sensitive:
+                    findings.append({
+                        "severity": "HIGH",
+                        "category": "COOKIES",
+                        "title": f"Sensitive Cookie '{cookie_name}' Transmitted over Insecure HTTP",
+                        "description": f"The sensitive cookie '{cookie_name}' is set over unencrypted plaintext HTTP, exposing credentials and session states to cleartext network interception and downgrade attacks.",
+                        "endpoint": url,
+                        "evidence": f"Cleartext Set-Cookie: {cookie_str}",
+                        "confidence": 1.0,
+                        "remediation": f"Enforce TLS/HTTPS across the application and append '; Secure' to the Set-Cookie directive for '{cookie_name}'."
+                    })
+
             # Secure flag
             if is_https and "secure" not in flags:
                 findings.append({
@@ -286,23 +302,28 @@ class HeaderAuditor:
                 "severity": "CRITICAL",
                 "category": "HEADERS",
                 "title": "Severe CORS Misconfiguration: Wildcard with Credentials",
-                "description": "The server responds with 'Access-Control-Allow-Origin: *' combined with 'Access-Control-Allow-Credentials: true', enabling untrusted origins to access authenticated resources.",
+                "description": "The server responds with 'Access-Control-Allow-Origin: *' combined with 'Access-Control-Allow-Credentials: true'. While standard browsers block this combination to prevent cross-origin credential theft, this misconfiguration breaks cross-origin integrations and frequently leads developers to blindly reflect the Request Origin, creating a critical data exfiltration vulnerability.",
                 "endpoint": url,
                 "evidence": f"Access-Control-Allow-Origin: * | Access-Control-Allow-Credentials: true",
                 "confidence": 1.0,
                 "remediation": "Never combine wildcard origins with credentials. Restrict Access-Control-Allow-Origin to trusted domains."
             })
-        # Origin reflection
-        elif acao == tested_origin and tested_origin in ["https://evil.cybernest.labs", "null"]:
-            findings.append({
-                "severity": "HIGH",
-                "category": "HEADERS",
-                "title": "CORS Insecure Origin Reflection",
-                "description": f"The server dynamically reflects untrusted Request Origin '{tested_origin}' into Access-Control-Allow-Origin.",
-                "endpoint": url,
-                "evidence": f"Reflected Origin: {acao} (Credentials allowed: {acac})",
-                "confidence": 0.95,
-                "remediation": "Validate the incoming Origin header against an immutable server-side whitelist before returning Access-Control-Allow-Origin."
-            })
+        # Origin reflection: verify if server dynamically reflected the tested cross-origin request
+        elif acao == tested_origin:
+            parsed_test = urllib.parse.urlparse(tested_origin)
+            parsed_url = urllib.parse.urlparse(url)
+            # Only flag if tested origin is distinct from target host or null
+            if (parsed_test.netloc and parsed_test.netloc != parsed_url.netloc) or tested_origin == "null":
+                sev = "CRITICAL" if acac else "HIGH"
+                findings.append({
+                    "severity": sev,
+                    "category": "HEADERS",
+                    "title": "CORS Insecure Origin Reflection" + (" with Credentials" if acac else ""),
+                    "description": f"The server dynamically reflects untrusted Request Origin '{tested_origin}' into Access-Control-Allow-Origin" + (" with credentials allowed, enabling cross-origin authenticated data theft." if acac else "."),
+                    "endpoint": url,
+                    "evidence": f"Reflected Origin: {acao} (Credentials allowed: {acac})",
+                    "confidence": 0.95,
+                    "remediation": "Validate the incoming Origin header against an immutable server-side whitelist before returning Access-Control-Allow-Origin."
+                })
 
         return findings

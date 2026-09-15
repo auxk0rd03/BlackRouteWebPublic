@@ -47,15 +47,21 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         self.assertTrue(any("Missing 'HttpOnly'" in t for t in titles))
         self.assertTrue(any("Missing 'Secure'" in t for t in titles))
 
+        # Cleartext HTTP transmission check
+        http_findings = HeaderAuditor.audit_cookies("http://example.com", ["session_id=12345; Path=/"])
+        http_titles = [f["title"] for f in http_findings]
+        self.assertTrue(any("Transmitted over Insecure HTTP" in t for t in http_titles))
+
     def test_cors_auditor(self):
         findings = HeaderAuditor.audit_cors(
             "https://example.com/api",
             acao_header="*",
             acac_header="true",
-            tested_origin="https://evil.cybernest.labs"
+            tested_origin="https://origin-verify.example.com"
         )
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["severity"], "CRITICAL")
+        self.assertIn("misconfiguration breaks", findings[0]["description"])
 
     def test_shannon_entropy_calculation(self):
         # Repetitive strings have near-zero entropy
@@ -91,6 +97,7 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         self.assertTrue(any("Stripe" in t for t in rule_titles))
         self.assertTrue(any("OpenAI" in t for t in rule_titles))
         self.assertIn("Entropy:", findings[0]["evidence"])
+        self.assertEqual(findings[0]["search_hint"], "AKIAIOSF")
 
     def test_curl_poc_generation(self):
         f_cors = {
@@ -102,16 +109,20 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         self.assertIn("curl", curl_cors)
         self.assertIn("Origin: https://origin-verify.api.example.com", curl_cors)
         self.assertNotIn("evil", curl_cors)
+        self.assertNotIn("-X GET", curl_cors)
 
         f_secret = {
             "category": "SECRETS",
             "title": "Exposed AWS Access Key ID",
             "endpoint": "https://app.example.com/bundle.js",
-            "evidence": "Pattern: AWS_KEY | Token: AKIA****MPLE"
+            "evidence": "Pattern: AWS_KEY | Token: AKIA************MPLE",
+            "search_hint": "AKIAIOSF"
         }
         curl_secret = generate_curl_poc(f_secret)
         self.assertIn("curl", curl_secret)
         self.assertIn("grep", curl_secret)
+        self.assertIn("AKIAIOSF", curl_secret)
+        self.assertNotIn("AKIAMPLE", curl_secret)
 
         f_graphql = {
             "category": "API_EXPOSURE",
@@ -179,7 +190,9 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         });
         """
         findings = DomAuditor.audit_javascript("https://example.com/app.js", dummy_js)
-        self.assertTrue(any("postMessage" in f["title"] for f in findings))
+        titles = [f["title"] for f in findings]
+        self.assertTrue(any("postMessage" in t for t in titles))
+        self.assertTrue(any("DOM-Based XSS" in t for t in titles))
 
     def test_engine_bridge_fallbacks(self):
         endpoints = ["/api/v1/users", "/admin/settings", "/login", "https://cdn.example.com/lib.js"]
