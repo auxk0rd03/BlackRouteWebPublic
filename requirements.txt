@@ -8,3 +8,4 @@ python-multipart
 beautifulsoup4
 httpx
 sse-starlette>=2.0.0
+esprima>=4.0.1

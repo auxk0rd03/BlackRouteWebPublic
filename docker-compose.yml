@@ -11,6 +11,12 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
     volumes:
       - blackroute_data:/app/data
       - ./app/static:/app/app/static

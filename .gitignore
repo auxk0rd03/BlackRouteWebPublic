@@ -1,6 +1,7 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+*.pyc
 *$py.class
 
 # Virtual environments
@@ -10,17 +11,27 @@ ENV/
 
 # Rust build artifacts
 engines/**/target/
+engines/web_spider/target/
 
 # Temporary data & databases
 *.db
 *.sqlite3
+blackroute_web.db
 .tmp/
+*.tmp
 br_web_*
+disaster_recovery.patch
+
+# Multi-target batch & scan report outputs
+Output/Targ*
+Output/*.zip
+*.zip
 
 # Build distributions
 dist/
 build/
 *.spec
 
-# Reports generated during tests
+# Reports and PoC harnesses generated during scans/tests
 app/static/BlackRoute_Web_Report_*.pdf
+app/static/poc_*.html

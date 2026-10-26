@@ -8,14 +8,58 @@
             <div hx-get="/api/engines-status" hx-trigger="load, every 10s" hx-swap="innerHTML"></div>
         </div>
 
-        <div class="panel control-panel">
-            <form hx-post="/api/scan" hx-target="#logs-area" hx-swap="innerHTML">
-                <label for="target_url" style="color: var(--text-secondary); font-weight: 600; font-size: 0.85em; display: block; margin-bottom: 5px; text-transform: uppercase;">
-                    TARGET WEB APPLICATION / DOMAIN:
-                </label>
-                <div class="input-group">
-                    <input type="text" id="target_url" name="target_url" placeholder="https://app.example.com or http://localhost:3000" autocomplete="off" required>
-                    <button type="submit" class="btn-scan btn">ENGAGE</button>
+        <div class="panel control-panel" id="scan-mode-panel">
+            <div class="input-mode-selector" style="display: flex; gap: 0; margin-bottom: 14px; border: 1px solid var(--border-primary);">
+                <button type="button"
+                        id="toggle-single-mode"
+                        class="btn mode-toggle-btn active"
+                        hx-get="/api/input-mode?mode=single"
+                        hx-target="#scan-mode-panel"
+                        hx-swap="innerHTML"
+                        onclick="if(window.setInputMode) window.setInputMode('single');"
+                        style="flex: 1; background-color: var(--accent-color); color: #ffffff; border-color: var(--accent-color);">
+                    Single Target Domain
+                </button>
+                <button type="button"
+                        id="toggle-batch-mode"
+                        class="btn mode-toggle-btn"
+                        hx-get="/api/input-mode?mode=batch"
+                        hx-target="#scan-mode-panel"
+                        hx-swap="innerHTML"
+                        onclick="if(window.setInputMode) window.setInputMode('batch');"
+                        style="flex: 1;">
+                    Batch Domain Import
+                </button>
+            </div>
+
+            <form id="scan-control-form" hx-post="/api/scan" hx-target="#logs-area" hx-swap="innerHTML" hx-encoding="multipart/form-data" enctype="multipart/form-data">
+                <input type="hidden" id="input_mode" name="input_mode" value="single">
+
+                <div id="single-target-controls" style="display: block;">
+                    <label for="target_url" style="color: var(--text-secondary); font-weight: 600; font-size: 0.85em; display: block; margin-bottom: 5px; text-transform: uppercase;">
+                        TARGET WEB APPLICATION / DOMAIN:
+                    </label>
+                    <div class="input-group">
+                        <input type="text" id="target_url" name="target_url" placeholder="https://app.example.com or http://localhost:3000" autocomplete="off" required>
+                        <button type="submit" class="btn-scan btn">ENGAGE</button>
+                    </div>
+                </div>
+
+                <div id="batch-target-controls" style="display: none;">
+                    <label for="src_list_file" style="color: var(--text-secondary); font-weight: 600; font-size: 0.85em; display: block; margin-bottom: 5px; text-transform: uppercase;">
+                        BULK SOURCE FILE UPLOAD (src_list.csv):
+                    </label>
+                    <div class="input-group" style="margin-bottom: 10px;">
+                        <input type="file" id="src_list_file" name="src_list_file" accept=".csv,text/csv" style="flex-grow: 1; background-color: var(--bg-color); border: 1px solid var(--border-secondary); color: var(--text-primary); padding: 8px; font-size: 0.85em;">
+                    </div>
+                    <label for="batch_targets" style="color: var(--text-secondary); font-weight: 600; font-size: 0.85em; display: block; margin-bottom: 5px; text-transform: uppercase;">
+                        INLINE COMMA-SEPARATED TARGET DOMAINS:
+                    </label>
+                    <textarea id="batch_targets" name="batch_targets" rows="3" placeholder="www.website01.com,www.website02.com,www.website99.com" style="width: 100%; box-sizing: border-box; background-color: var(--bg-color); border: 1px solid var(--border-secondary); color: var(--text-primary); padding: 10px; font-family: var(--font-mono); font-size: 0.85em; margin-bottom: 10px;"></textarea>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button type="submit" class="btn-scan btn" style="flex: 1;">ENGAGE BATCH RECON</button>
+                        <a href="/api/export/batch-zip" class="btn btn-batch-export" target="_blank" style="text-align: center;">[ EXPORT BATCH ZIP ]</a>
+                    </div>
                 </div>
 
                 <div class="options-group" style="margin-top: 14px; font-size: 0.82em; color: var(--text-secondary); display: flex; flex-direction: column; gap: 8px;">
@@ -41,7 +85,12 @@
                     </div>
                     <div style="margin-top: 4px;">
                         <label for="auth_header" style="display: block; margin-bottom: 4px;">Authorization Header (Bearer / Token / Cookie):</label>
-                        <input type="text" id="auth_header" name="auth_header" placeholder="Bearer eyJhbGciOi..." style="width: 100%;">
+                        <input type="text" id="auth_header" name="auth_header" placeholder="Bearer eyJhbGciOi..." style="width: 100%; margin-bottom: 8px;">
+                    </div>
+                    <div style="margin-top: 8px;">
+                        <label for="auth_macros" style="display: block; margin-bottom: 4px;">Authentication Macros (JSON for session refresh):</label>
+                        <textarea id="auth_macros" name="auth_macros" placeholder='[{"method": "POST", "url": "https://api.example.com/login", "json": {"username": "user", "password": "pass"}, "extract_token": "token", "extract_cookies": ["session_id"]}]' style="width: 100%; height: 80px; font-family: var(--font-mono); font-size: 0.75em;"></textarea>
+                        <div style="font-size: 0.7em; color: var(--text-secondary); margin-top: 2px;">JSON array of auth steps for automatic session refresh on 401 errors</div>
                     </div>
                 </details>
             </form>
@@ -67,9 +116,12 @@
                 <div class="report-generation" style="text-align: center;">
                     <div style="font-size: 0.85em; text-transform: uppercase; margin-bottom: 10px; color: var(--sub-accent); font-weight: 600;">Report Artifact Export</div>
                     <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
-                        <button class="btn" disabled>[ ACCESS VIDS AUDIT REPORT ]</button>
-                        <button class="btn" disabled>Export STIX 2.1</button>
-                        <button class="btn" disabled>Export TAXII</button>
+                        <a href="/api/export/report-latest" class="btn" target="_blank">[ ACCESS VIDS AUDIT REPORT ]</a>
+                        <a href="/api/export/stix" class="btn" target="_blank">Export STIX 2.1</a>
+                        <a href="/api/export/taxii" class="btn" target="_blank">Export TAXII</a>
+                        <a href="/api/export/sarif" class="btn" target="_blank">Export SARIF</a>
+                        <a href="/api/export/markdown" class="btn" target="_blank">Export Triage MD</a>
+                        <a href="/api/export/batch-zip" class="btn btn-batch-export" target="_blank">[ DOWNLOAD BATCH ZIP ARCHIVE ]</a>
                     </div>
                 </div>
             </div>
@@ -78,6 +130,48 @@
 </div>
 
 <script>
+    window.setInputMode = function(mode) {
+        const isBatch = (mode === 'batch');
+        const modeInput = document.getElementById('input_mode');
+        const singleCtrl = document.getElementById('single-target-controls');
+        const batchCtrl = document.getElementById('batch-target-controls');
+        const targetUrlInput = document.getElementById('target_url');
+        const singleBtn = document.getElementById('toggle-single-mode');
+        const batchBtn = document.getElementById('toggle-batch-mode');
+        const form = document.getElementById('scan-control-form');
+
+        if (modeInput) modeInput.value = isBatch ? 'batch' : 'single';
+        if (singleCtrl) singleCtrl.style.display = isBatch ? 'none' : 'block';
+        if (batchCtrl) batchCtrl.style.display = isBatch ? 'block' : 'none';
+        if (targetUrlInput) {
+            if (isBatch) {
+                targetUrlInput.removeAttribute('required');
+            } else {
+                targetUrlInput.setAttribute('required', 'required');
+            }
+        }
+        if (form) {
+            form.setAttribute('hx-post', isBatch ? '/api/scan/batch' : '/api/scan');
+        }
+        if (singleBtn && batchBtn) {
+            if (isBatch) {
+                batchBtn.classList.add('active');
+                batchBtn.style.backgroundColor = 'var(--accent-color)';
+                batchBtn.style.color = '#ffffff';
+                singleBtn.classList.remove('active');
+                singleBtn.style.backgroundColor = '';
+                singleBtn.style.color = '';
+            } else {
+                singleBtn.classList.add('active');
+                singleBtn.style.backgroundColor = 'var(--accent-color)';
+                singleBtn.style.color = '#ffffff';
+                batchBtn.classList.remove('active');
+                batchBtn.style.backgroundColor = '';
+                batchBtn.style.color = '';
+            }
+        }
+    };
+
     window.activeEventSource = null;
 
     window.connectSSE = function() {

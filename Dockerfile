@@ -62,10 +62,11 @@ COPY Sources /app/Sources
 COPY blackroute_web.py /app/blackroute_web.py
 COPY CyberNestLabsLogo.png /app/CyberNestLabsLogo.png
 
-# Create non-root user and assign permissions
-RUN useradd -m -u 1000 cybernest && \
-    mkdir -p /app/app/static /app/data && \
-    chown -R cybernest:cybernest /app
+# Create non-root user and assign strict sandbox permissions
+RUN useradd -m -u 1000 -s /usr/sbin/nologin cybernest && \
+    mkdir -p /app/app/static /app/data /app/Output && \
+    chown -R cybernest:cybernest /app && \
+    chmod 550 /app/bin/*
 
 USER cybernest
 

@@ -1,0 +1,76 @@
+================================================================================
+CYBERNEST LABS AUTHORIZED SECURITY RESEARCH & DUAL-USE SOFTWARE LICENSE
+================================================================================
+
+Copyright (c) 2026 Auxk0rd / CyberNest Holdings LLC, Labs Department.
+All rights reserved.
+
+Author: Auxk0rd
+Organization: CyberNest Holdings LLC - Labs Department
+Project: BlackRoute-Web
+
+--------------------------------------------------------------------------------
+1. PURPOSE AND PERMITTED USE
+--------------------------------------------------------------------------------
+BlackRoute-Web is a security auditing and attack surface topology framework
+designed exclusively for authorized defensive auditing, professional vulnerability
+assessments, infrastructure hardening, and authorized bug bounty research.
+
+This software is strictly intended for lawful security testing where the
+operator has obtained prior, explicit, written authorization from the legal
+owner of the target domain, host, application, or network infrastructure.
+
+UNDER NO CIRCUMSTANCES IS THIS SOFTWARE TO BE USED FOR MALICIOUS PURPOSES,
+UNAUTHORIZED INTRUSION, DISTRIBUTED DENIAL OF SERVICE (DDOS), DATA EXFILTRATION,
+SURVEILLANCE, RECONNAISSANCE AGAINST PROHIBITED TARGETS, HARASSMENT, OR ANY
+ACTIVITY THAT VIOLATES LOCAL, STATE, FEDERAL, OR INTERNATIONAL LAWS, INCLUDING
+BUT NOT LIMITED TO THE UNITED STATES COMPUTER FRAUD AND ABUSE ACT (CFAA - 18
+U.S.C. § 1030).
+
+--------------------------------------------------------------------------------
+2. ASSUMPTION OF RISK AND OPERATOR INDEMNIFICATION
+--------------------------------------------------------------------------------
+By compiling, accessing, downloading, executing, or retaining this software,
+you expressly agree that:
+
+a. You assume sole, complete, and unreserved legal and operational responsibility
+   for all actions, outcomes, and liabilities arising from your execution of
+   BlackRoute-Web.
+b. You agree to defend, indemnify, and hold completely harmless Auxk0rd,
+   CyberNest Holdings LLC, its members, managers, affiliates, subsidiaries,
+   contractors, and agents from any and all claims, civil actions, criminal
+   charges, damages, penalties, fines, losses, judgments, operational expenses,
+   and legal fees resulting directly or indirectly from your deployment, misuse,
+   configuration, or modification of this codebase.
+
+--------------------------------------------------------------------------------
+3. DISCLAIMER OF WARRANTIES AND LIMITATION OF LIABILITY ("AS IS")
+--------------------------------------------------------------------------------
+THIS SOFTWARE IS PROVIDED BY AUXK0RD AND CYBERNEST HOLDINGS LLC "AS IS" AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND
+NON-INFRINGEMENT ARE ENTIRELY DISCLAIMED.
+
+IN NO EVENT SHALL CYBERNEST HOLDINGS LLC, AUXK0RD, OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, REVENUE, OR PROFITS; SYSTEM INTERRUPTION; TARGET CORRUPTION;
+OR FIREWALL/WAF IP BANS AND ALERT ESCALATIONS) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+4. INTELLECTUAL PROPERTY AND ATTRIBUTION
+--------------------------------------------------------------------------------
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, author
+   attribution to Auxk0rd, corporate attribution to CyberNest Holdings LLC (Labs
+   Department), this list of conditions, and the disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   author attribution to Auxk0rd, corporate attribution to CyberNest Holdings
+   LLC (Labs Department), this list of conditions, and the disclaimer in the
+   documentation and/or other materials provided with the distribution.
+================================================================================

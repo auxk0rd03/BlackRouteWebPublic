@@ -75,14 +75,34 @@ class TestPipelineE2E(unittest.IsolatedAsyncioTestCase):
 
     @classmethod
     def setUpClass(cls):
+        import tempfile
+        from pathlib import Path
+        from app.core.config import settings
+        from app.core.database import init_db
+        cls._tmp_env = tempfile.TemporaryDirectory(prefix="br_test_e2e_")
+        tmp_root = Path(cls._tmp_env.name)
+        cls._orig_db = settings.DB_PATH
+        cls._orig_out = settings.OUTPUT_DIR
+        cls._orig_static = settings.STATIC_DIR
+        settings.DB_PATH = tmp_root / "test_blackroute_e2e.db"
+        settings.OUTPUT_DIR = tmp_root / "Output"
+        settings.STATIC_DIR = tmp_root / "static"
+        os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
+        os.makedirs(settings.STATIC_DIR, exist_ok=True)
+        init_db()
         cls.server = HTTPServer(("127.0.0.1", 18888), MockVulnerableHandler)
         cls.server_thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.server_thread.start()
 
     @classmethod
     def tearDownClass(cls):
+        from app.core.config import settings
         cls.server.shutdown()
         cls.server.server_close()
+        settings.DB_PATH = cls._orig_db
+        settings.OUTPUT_DIR = cls._orig_out
+        settings.STATIC_DIR = cls._orig_static
+        cls._tmp_env.cleanup()
 
     async def test_full_web_scan_pipeline(self):
         target = "http://127.0.0.1:18888"
@@ -177,6 +197,52 @@ class TestPipelineE2E(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["status"], "success")
         self.assertTrue(data["report_file"].endswith(".pdf"))
         self.assertIn("/static/", data["download_url"])
+
+    async def test_multi_target_batch_pipeline_and_zip_export(self):
+        """Verify batch pipeline generates Output/Targ001..Targ00N with .md and .pdf reports and exports ZIP archive."""
+        import io
+        import zipfile
+        from app.core.security import parse_src_list
+        from app.core.scanner import run_batch_scan_pipeline
+        from app.core.config import settings
+        from app.routes.api import export_batch_zip
+
+        raw_csv = "http://127.0.0.1:18888,http://127.0.0.1:18888/dashboard"
+        targets = parse_src_list(raw_csv)
+        self.assertEqual(len(targets), 2)
+
+        batch_results = await run_batch_scan_pipeline(
+            targets=targets,
+            shadow_mode=True,
+            local_staging=True,
+            stealth_mode=True
+        )
+        self.assertEqual(len(batch_results), 2)
+
+        # Verify Output/Targ001 and Output/Targ002 directory structure & files
+        targ1_dir = settings.OUTPUT_DIR / "Targ001"
+        targ2_dir = settings.OUTPUT_DIR / "Targ002"
+        self.assertTrue(targ1_dir.is_dir(), "Output/Targ001 must exist")
+        self.assertTrue(targ2_dir.is_dir(), "Output/Targ002 must exist")
+
+        for idx, t_dir in enumerate([targ1_dir, targ2_dir], start=1):
+            files = [f.name for f in t_dir.iterdir() if f.is_file()]
+            md_files = [f for f in files if f.startswith("blackroute_triage_scan_") and f.endswith(".md")]
+            pdf_files = [f for f in files if f.startswith("BlackRoute_Web_Report_") and f.endswith(".pdf")]
+            self.assertEqual(len(md_files), 1, f"Targ00{idx} must contain 1 triage .md file, got {files}")
+            self.assertEqual(len(pdf_files), 1, f"Targ00{idx} must contain 1 VIDS .pdf report, got {files}")
+
+        # Verify ZIP Archive Compilation & Export Endpoint
+        zip_resp = await export_batch_zip()
+        self.assertEqual(zip_resp.status_code, 200)
+        self.assertEqual(zip_resp.headers.get("content-type"), "application/zip")
+
+        with zipfile.ZipFile(io.BytesIO(zip_resp.body), "r") as zf:
+            names = zf.namelist()
+            self.assertTrue(any(n.startswith("Output/Targ001/blackroute_triage_scan_") and n.endswith(".md") for n in names))
+            self.assertTrue(any(n.startswith("Output/Targ001/BlackRoute_Web_Report_") and n.endswith(".pdf") for n in names))
+            self.assertTrue(any(n.startswith("Output/Targ002/blackroute_triage_scan_") and n.endswith(".md") for n in names))
+            self.assertTrue(any(n.startswith("Output/Targ002/BlackRoute_Web_Report_") and n.endswith(".pdf") for n in names))
 
 if __name__ == "__main__":
     unittest.main()

@@ -158,6 +158,19 @@ build_release() {
     echo "=================================================="
 }
 
+run_tests() {
+    setup_venv
+    echo ""
+    echo "=================================================="
+    echo "     BLACKROUTE-WEB - AUTOMATED TEST SUITE"
+    echo "=================================================="
+    if [ $# -gt 0 ]; then
+        .venv/bin/python -m unittest "$@"
+    else
+        .venv/bin/python -m unittest discover -s tests -v
+    fi
+}
+
 case "$1" in
     launch|run)
         run_application
@@ -168,6 +181,10 @@ case "$1" in
     build_release)
         build_release
         ;;
+    test|tests)
+        shift
+        run_tests "$@"
+        ;;
     *)
         echo "=================================================="
         echo "     CYBERNEST LABS: BLACKROUTE-WEB v1.0"
@@ -176,13 +193,15 @@ case "$1" in
         echo "  [1] Launch Mission Control Dashboard"
         echo "  [2] Compile Polyglot Engines (Rust + Go)"
         echo "  [3] Build Standalone Linux Executable (PyInstaller)"
-        echo "  [4] Exit"
+        echo "  [4] Run Automated Test Suite (.venv)"
+        echo "  [5] Exit"
         echo "=================================================="
-        read -p "Select option [1-4]: " choice
+        read -p "Select option [1-5]: " choice
         case "$choice" in
             1) run_application ;;
             2) build_engines ;;
             3) build_release ;;
+            4) run_tests ;;
             *) exit 0 ;;
         esac
         ;;

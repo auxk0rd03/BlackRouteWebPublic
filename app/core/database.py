@@ -46,6 +46,15 @@ def init_db() -> None:
     columns = [col["name"] for col in cursor.fetchall()]
     if "curl_command" not in columns:
         cursor.execute("ALTER TABLE findings ADD COLUMN curl_command TEXT")
+    if "html_poc_content" not in columns:
+        cursor.execute("ALTER TABLE findings ADD COLUMN html_poc_content TEXT")
+    if "html_poc" not in columns:
+        cursor.execute("ALTER TABLE findings ADD COLUMN html_poc TEXT")
+
+    cursor.execute("PRAGMA table_info(scans)")
+    scan_columns = [col["name"] for col in cursor.fetchall()]
+    if "risk_score" not in scan_columns:
+        cursor.execute("ALTER TABLE scans ADD COLUMN risk_score INTEGER DEFAULT 0")
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS endpoints (
@@ -69,7 +78,8 @@ def save_scan_record(
     endpoints: List[Dict[str, Any]] = None,
     pages_crawled: int = 0,
     report_file: str = "",
-    status: str = "completed"
+    status: str = "completed",
+    risk_score: int = 0
 ) -> int:
     """Persist scan results, findings, and discovered endpoints into SQLite."""
     init_db()
@@ -82,18 +92,18 @@ def save_scan_record(
 
     cursor.execute(
         """
-        INSERT INTO scans (target_url, status, pages_crawled, endpoints_found, findings_count, report_file)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO scans (target_url, status, pages_crawled, endpoints_found, findings_count, report_file, risk_score)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (target_url, status, pages_crawled, endpoints_found, findings_count, report_file)
+        (target_url, status, pages_crawled, endpoints_found, findings_count, report_file, risk_score)
     )
     scan_id = cursor.lastrowid
 
     for f in findings:
         cursor.execute(
             """
-            INSERT INTO findings (scan_id, severity, category, title, description, endpoint, evidence, confidence, remediation, curl_command)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO findings (scan_id, severity, category, title, description, endpoint, evidence, confidence, remediation, curl_command, html_poc_content, html_poc)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 scan_id,
@@ -105,7 +115,9 @@ def save_scan_record(
                 str(f.get("evidence", ""))[:1500],
                 float(f.get("confidence", 1.0)),
                 str(f.get("remediation", "")),
-                str(f.get("curl_command", ""))
+                str(f.get("curl_command", "")),
+                str(f.get("html_poc_content", "")),
+                str(f.get("html_poc", ""))
             )
         )
 

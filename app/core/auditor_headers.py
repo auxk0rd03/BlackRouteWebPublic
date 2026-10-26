@@ -1,6 +1,30 @@
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
+import re
 import urllib.parse
 import httpx
+
+# Vendor WAF / analytics cookies that must remain JS-readable for telemetry.
+# Missing HttpOnly on these is expected, not a first-party session defect.
+VENDOR_COOKIE_EXCLUSIONS = {
+    "Akamai Bot Manager": re.compile(
+        r"^(?:_abck|bm_(?:mi|so|sz|sv|lso)|ak_bmsc|akamai_.*)$",
+        re.IGNORECASE,
+    ),
+    "Adobe Experience Cloud": re.compile(
+        r"^(?:mbox|mboxEdgeCluster|AMCVS?_.+|s_cc|s_sq)$",
+        re.IGNORECASE,
+    ),
+    "Tealium": re.compile(r"^utag_main$", re.IGNORECASE),
+    "Google Analytics": re.compile(r"^(?:_ga(?:_[A-Za-z0-9]+)?|_gid|_gcl_au)$", re.IGNORECASE),
+}
+
+
+def _vendor_cookie_family(cookie_name: str) -> Optional[str]:
+    for family, pattern in VENDOR_COOKIE_EXCLUSIONS.items():
+        if pattern.match(cookie_name):
+            return family
+    return None
+
 
 class HeaderAuditor:
     """
@@ -206,6 +230,7 @@ class HeaderAuditor:
         """Audit Set-Cookie directives for Secure, HttpOnly, and SameSite hygiene."""
         findings = []
         is_https = url.lower().startswith("https://")
+        seen_cookies = set()  # Track (cookie_name.lower(), check_type) to prevent duplicates
 
         for cookie_str in cookies_headers:
             parts = [p.strip() for p in cookie_str.split(";")]
@@ -215,11 +240,18 @@ class HeaderAuditor:
             name_val = parts[0]
             cookie_name = name_val.split("=")[0].strip()
             flags = {p.lower().split("=")[0].strip(): (p.split("=")[1].strip() if "=" in p else True) for p in parts[1:]}
+            vendor_family = _vendor_cookie_family(cookie_name)
+            
+            # Skip if we've already processed this cookie for this specific check type
+            cookie_key = (cookie_name.lower(), "cookie_audit")
+            if cookie_key in seen_cookies:
+                continue
+            seen_cookies.add(cookie_key)
 
             # Insecure cleartext HTTP cookie check
             if not is_https:
                 is_sensitive = any(kw in cookie_name.lower() for kw in ["sess", "auth", "token", "jwt", "id", "login", "key"])
-                if is_sensitive:
+                if is_sensitive and not vendor_family:
                     findings.append({
                         "severity": "HIGH",
                         "category": "COOKIES",
@@ -234,43 +266,65 @@ class HeaderAuditor:
             # Secure flag
             if is_https and "secure" not in flags:
                 findings.append({
-                    "severity": "MEDIUM",
+                    "severity": "INFO" if vendor_family else "MEDIUM",
                     "category": "COOKIES",
                     "title": f"Cookie '{cookie_name}' Missing 'Secure' Flag",
                     "description": f"The cookie '{cookie_name}' is transmitted over HTTPS but lacks the 'Secure' directive, risking interception via plaintext HTTP downgrade.",
                     "endpoint": url,
                     "evidence": f"Set-Cookie: {cookie_str}",
-                    "confidence": 1.0,
-                    "remediation": f"Append '; Secure' to the Set-Cookie directive for '{cookie_name}'."
+                    "confidence": 0.8 if vendor_family else 1.0,
+                    "remediation": f"Append '; Secure' to the Set-Cookie directive for '{cookie_name}'.",
+                    "tags": ["vendor_integration", vendor_family] if vendor_family else [],
                 })
 
             # HttpOnly flag
             if "httponly" not in flags:
-                # Sensitive cookies (session, token, auth, id) deserve higher severity
-                is_sensitive = any(kw in cookie_name.lower() for kw in ["sess", "auth", "token", "jwt", "id", "login", "key"])
-                severity = "HIGH" if is_sensitive else "LOW"
-                findings.append({
-                    "severity": severity,
-                    "category": "COOKIES",
-                    "title": f"Cookie '{cookie_name}' Missing 'HttpOnly' Flag",
-                    "description": f"The cookie '{cookie_name}' is accessible via client-side JavaScript (`document.cookie`), making it vulnerable to extraction via XSS.",
-                    "endpoint": url,
-                    "evidence": f"Set-Cookie: {cookie_str}",
-                    "confidence": 0.95,
-                    "remediation": f"Append '; HttpOnly' to the Set-Cookie directive for '{cookie_name}'."
-                })
+                if vendor_family:
+                    findings.append({
+                        "severity": "INFO",
+                        "category": "COOKIES",
+                        "title": f"Vendor Cookie '{cookie_name}' Missing 'HttpOnly' Flag",
+                        "description": (
+                            f"{vendor_family} cookie '{cookie_name}' is readable by JavaScript by design. "
+                            "Anti-bot and analytics SDKs must read and update this cookie in the browser; "
+                            "forcing HttpOnly would break vendor integrity checks. This is not a first-party session defect."
+                        ),
+                        "endpoint": url,
+                        "evidence": f"Set-Cookie: {cookie_str}",
+                        "confidence": 0.8,
+                        "remediation": (
+                            f"Do not set HttpOnly on '{cookie_name}'. Confirm the cookie is scoped to the vendor "
+                            "integration and is not reused as an application session token."
+                        ),
+                        "tags": ["vendor_integration", vendor_family, "httponly_false_positive"],
+                    })
+                else:
+                    # Sensitive cookies (session, token, auth, id) deserve higher severity
+                    is_sensitive = any(kw in cookie_name.lower() for kw in ["sess", "auth", "token", "jwt", "id", "login", "key"])
+                    severity = "HIGH" if is_sensitive else "LOW"
+                    findings.append({
+                        "severity": severity,
+                        "category": "COOKIES",
+                        "title": f"Cookie '{cookie_name}' Missing 'HttpOnly' Flag",
+                        "description": f"The cookie '{cookie_name}' is accessible via client-side JavaScript (`document.cookie`), making it vulnerable to extraction via XSS.",
+                        "endpoint": url,
+                        "evidence": f"Set-Cookie: {cookie_str}",
+                        "confidence": 0.95,
+                        "remediation": f"Append '; HttpOnly' to the Set-Cookie directive for '{cookie_name}'."
+                    })
 
             # SameSite flag
             if "samesite" not in flags:
                 findings.append({
-                    "severity": "LOW",
+                    "severity": "INFO" if vendor_family else "LOW",
                     "category": "COOKIES",
                     "title": f"Cookie '{cookie_name}' Missing 'SameSite' Attribute",
                     "description": f"The cookie '{cookie_name}' does not specify SameSite, potentially exposing users to Cross-Site Request Forgery (CSRF).",
                     "endpoint": url,
                     "evidence": f"Set-Cookie: {cookie_str}",
-                    "confidence": 0.9,
-                    "remediation": f"Set 'SameSite=Lax' or 'SameSite=Strict' on cookie '{cookie_name}'."
+                    "confidence": 0.8 if vendor_family else 0.9,
+                    "remediation": f"Set 'SameSite=Lax' or 'SameSite=Strict' on cookie '{cookie_name}'.",
+                    "tags": ["vendor_integration", vendor_family] if vendor_family else [],
                 })
             elif str(flags["samesite"]).lower() == "none" and "secure" not in flags:
                 findings.append({

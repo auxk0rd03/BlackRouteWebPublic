@@ -4,32 +4,43 @@ import tempfile
 from pathlib import Path
 
 def resource_path(relative_path: str) -> str:
-    """Get absolute path to resource, works for dev and for PyInstaller."""
+    """Get absolute path to resource, works for dev and for PyInstaller. Enforces base directory confinement."""
+    if "\x00" in str(relative_path):
+        raise ValueError("Null byte detected in resource path.")
     try:
         # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
+        base_path = Path(sys._MEIPASS).resolve()
     except Exception:
         base_path = Path(__file__).resolve().parent.parent.parent
-    return os.path.join(str(base_path), relative_path)
+    rel_clean = str(relative_path).strip()
+    if rel_clean in ("", "."):
+        return str(base_path)
+    candidate = (base_path / rel_clean).resolve()
+    if not candidate.is_relative_to(base_path):
+        raise ValueError(f"Security Violation: Resource path '{relative_path}' escapes application root.")
+    return str(candidate)
 
 
 class Settings:
     # Resolve base resource directory
     BASE_DIR = Path(resource_path("."))
-    STATIC_DIR = BASE_DIR / "app" / "static"
+    STATIC_DIR = Path(os.environ.get("BLACKROUTE_STATIC_DIR", str(BASE_DIR / "app" / "static")))
     TEMPLATES_DIR = BASE_DIR / "app" / "templates"
 
-    # Persistent Data (Next to Executable)
+    # Persistent Data (Next to Executable, or overridden via environment for custom VM/Docker mounts)
     if getattr(sys, 'frozen', False):
         EXEC_DIR = Path(sys.executable).parent
     else:
         EXEC_DIR = Path(__file__).resolve().parent.parent.parent
 
     DB_NAME = "blackroute_web.db"
-    DB_PATH = EXEC_DIR / DB_NAME
+    DB_PATH = Path(os.environ.get("BLACKROUTE_DB_PATH", str(EXEC_DIR / DB_NAME)))
 
     # Compiled Polyglot Engine Binaries (Rust / Go)
     ENGINE_BIN_DIR = EXEC_DIR / "bin"
+
+    # Multi-Target Batch Output Directory Architecture
+    OUTPUT_DIR = Path(os.environ.get("BLACKROUTE_OUTPUT_DIR", str(EXEC_DIR / "Output")))
 
     # Default Crawling & Analysis Limits
     CRAWL_MAX_PAGES = 35
@@ -67,10 +78,24 @@ class Settings:
             "Upgrade-Insecure-Requests": "1"
         }
         if engagement_id:
-            clean_id = str(engagement_id).strip()
+            clean_id = str(engagement_id).replace("\r", "").replace("\n", "").replace("\x00", "").strip()
             if clean_id:
                 headers["X-Security-Engagement"] = clean_id
                 headers["X-Authorized-Audit"] = "true"
+                # Targeted Akamai Edge Cache Bypass & True Origin Verification headers
+                headers["Pragma"] = "akamai-x-cache-on, akamai-x-cache-remote-on, akamai-x-check-cacheable, akamai-x-get-cache-key, akamai-x-get-true-cache-key, no-cache"
+                headers["Cache-Control"] = "no-cache, no-store, max-age=0"
+                if ":" in clean_id:
+                    prefix, token_val = clean_id.split(":", 1)
+                    prefix_clean = prefix.lower().strip()
+                    token_clean = token_val.strip()
+                    if prefix_clean in ("staging", "akamai", "token", "edge") and token_clean:
+                        headers["X-Akamai-Staging"] = "true"
+                        headers["X-Akamai-Edge-Token"] = token_clean
+                    else:
+                        headers["X-Akamai-Staging"] = "true"
+                else:
+                    headers["X-Akamai-Staging"] = "true"
         return headers
 
 settings = Settings()

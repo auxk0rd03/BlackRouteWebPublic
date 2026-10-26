@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlparse
@@ -11,15 +12,79 @@ from app.core.config import settings
 
 logger = logging.getLogger("blackroute_web.engine_bridge")
 
+_ALLOWED_ENGINES = {"web_spider", "surface_graph"}
+
+
+def _get_sandbox_env() -> Dict[str, str]:
+    """Return a minimal, scrubbed environment for child engine processes to prevent secret/host env leakage."""
+    tmp_dir = tempfile.gettempdir()
+    return {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": tmp_dir,
+        "TMPDIR": tmp_dir,
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+    }
+
+
 def _validate_path(path: str) -> str:
-    """Resolve and validate a filesystem path before passing to an engine."""
-    if "\0" in path:
-        raise ValueError("Null byte detected in path argument")
-    return os.path.realpath(path)
+    """Resolve and validate a filesystem path before passing to an engine, enforcing sandbox boundaries."""
+    if not path or not isinstance(path, str):
+        raise ValueError("Target path must be a non-empty string")
+    if "\0" in path or "\r" in path or "\n" in path:
+        raise ValueError("Null byte or control character detected in path argument")
+    if path.strip().startswith("-"):
+        raise ValueError("Security Violation: Hyphen-prefixed path rejected (argument injection defense)")
+    if os.path.islink(path):
+        raise ValueError("Security Violation: Symlink target path is not permitted for engine execution")
+
+    real_path = Path(os.path.realpath(path)).resolve()
+    allowed_roots = [
+        Path(tempfile.gettempdir()).resolve(),
+        Path(settings.OUTPUT_DIR).resolve(),
+        Path(settings.STATIC_DIR).resolve(),
+        Path(settings.EXEC_DIR).resolve(),
+        Path(settings.BASE_DIR).resolve(),
+    ]
+    if not any(real_path.is_relative_to(root) for root in allowed_roots):
+        raise ValueError(
+            f"Security Violation: Path '{real_path}' is outside allowed sandbox directories"
+        )
+    return str(real_path)
+
+def _is_valid_route(path: str) -> bool:
+    """Validate that an extracted candidate path is a genuine URI route and not JS code."""
+    if not path or len(path) > 256:
+        return False
+    if not path.startswith(("/", "http://", "https://", "ws://", "wss://")):
+        return False
+
+    invalid_tokens = [
+        "&&", "||", "return", "function", "var ", "let ", "const ",
+        "test(", "match(", "replace(", "typeof ", "undefined", "null",
+        ";", "{", "}", "[", "]", "(", ")", "=>", "<", ">", "$", "\\",
+        ",", " ", "\t", "\n", "\r", '"', "'", "`",
+    ]
+    for token in invalid_tokens:
+        if token in path:
+            return False
+
+    if "d{" in path or "w{" in path or path.endswith(("/i", "/g")):
+        return False
+
+    return True
 
 def _find_engine(name: str) -> Optional[str]:
-    """Locate a compiled engine binary in the configured bin/ directory."""
-    bin_path = settings.ENGINE_BIN_DIR / name
+    """Locate a compiled engine binary in the configured bin/ directory with strict allowlist & boundary checks."""
+    if not name or name not in _ALLOWED_ENGINES or os.path.basename(name) != name:
+        return None
+    bin_dir = settings.ENGINE_BIN_DIR.resolve()
+    candidate = settings.ENGINE_BIN_DIR / name
+    if candidate.is_symlink():
+        return None
+    bin_path = candidate.resolve()
+    if not bin_path.is_relative_to(bin_dir):
+        return None
     if bin_path.is_file() and os.access(str(bin_path), os.X_OK):
         return str(bin_path)
     return None
@@ -80,14 +145,18 @@ def _extract_json_payload(raw: str) -> Optional[Any]:
     return None
 
 def _run_engine(binary_path: str, args: List[str], timeout: int = 60) -> Optional[Dict[str, Any]]:
-    """Execute compiled engine binary via subprocess without shell=True and parse JSON safely."""
+    """Execute compiled engine binary via subprocess without shell=True in a scrubbed environment and parse JSON safely."""
     cmd = [binary_path] + args
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
+            shell=False,
+            env=_get_sandbox_env(),
+            cwd=tempfile.gettempdir(),
+            close_fds=True,
         )
 
         stdout = result.stdout.strip()
@@ -119,7 +188,7 @@ def _run_engine(binary_path: str, args: List[str], timeout: int = 60) -> Optiona
 # High-speed web asset parser & endpoint extractor with Python fallback
 # ---------------------------------------------------------------------------
 
-def run_spider_extractor(target_path: str) -> Dict[str, Any]:
+def run_spider_extractor(target_path: str, depth: int = 2, target_domain: str = "") -> Dict[str, Any]:
     """
     Extract endpoints, links, and forms from a file or directory using Rust web_spider.
     Validates output schema and falls back to Python parser if engine fails or crashes.
@@ -128,7 +197,9 @@ def run_spider_extractor(target_path: str) -> Dict[str, Any]:
     safe_path = _validate_path(target_path)
 
     if engine is not None:
-        args = ["dir", safe_path] if os.path.isdir(safe_path) else [safe_path]
+        args = ["dir", safe_path, "--depth", str(depth)] if os.path.isdir(safe_path) else [safe_path]
+        if target_domain:
+            args.extend(["--domain", target_domain])
         result = _run_engine(engine, args, timeout=45)
         # Schema validation
         if result is not None and "endpoints" in result and isinstance(result["endpoints"], list):
@@ -136,9 +207,65 @@ def run_spider_extractor(target_path: str) -> Dict[str, Any]:
         logger.info("web_spider engine unavailable or schema mismatch; falling back to Python.")
 
     # Python Fallback
-    return _python_fallback_spider(safe_path)
+    return _python_fallback_spider(safe_path, depth=depth, target_domain=target_domain)
 
-def _python_fallback_spider(path: str) -> Dict[str, Any]:
+def _is_allowed_domain(url: str, target_domain: str) -> bool:
+    if not target_domain:
+        return True
+    t_lower = target_domain.lower()
+    if url.startswith("/") and not url.startswith("//"):
+        return True
+    try:
+        parsed = urlparse(url)
+        host = (parsed.netloc or "").split(":")[0].lower()
+        return host == t_lower or host.endswith("." + t_lower)
+    except Exception:
+        return True
+
+def _resolve_webpack_chunks_python(content: str) -> List[str]:
+    """Extract Webpack, Vite, and Rollup dynamic code chunks from JS content."""
+    discovered = []
+    # 1. Webpack dynamic chunk maps: __webpack_require__.u or jsonpScriptSrc
+    for needle in ["__webpack_require__.u", "jsonpScriptSrc"]:
+        start_idx = 0
+        while True:
+            found_idx = content.find(needle, start_idx)
+            if found_idx == -1:
+                break
+            chunk_slice = content[found_idx:found_idx + 1500]
+            suffix = ".chunk.js" if ".chunk.js" in chunk_slice else (".bundle.js" if ".bundle.js" in chunk_slice else ".js")
+            prefix_match = re.search(r'[\'"]((?:static/|assets/)?js/?)[\'"]', chunk_slice)
+            prefix = prefix_match.group(1) if prefix_match else ""
+
+            entries = re.findall(r'(?:"?([a-zA-Z0-9_\-]+)"?\s*:\s*["\']([a-zA-Z0-9_\-]+)["\'])', chunk_slice)
+            for cid, hash_val in entries:
+                resolved = f"{prefix}{cid}.{hash_val}{suffix}"
+                if resolved not in discovered:
+                    discovered.append(resolved)
+                if len(hash_val) > 6:
+                    alt = f"{prefix}{hash_val}{suffix}"
+                    if alt not in discovered:
+                        discovered.append(alt)
+            start_idx = found_idx + len(needle)
+
+    # 2. Vite / Rollup dynamic imports: import("./views/AdminDashboard.js")
+    for m in re.finditer(r'import\s*\(\s*[\'"]([^\'"]+\.js)[\'"]\s*\)', content):
+        p = m.group(1)
+        if p not in discovered:
+            discovered.append(p)
+        clean = p.lstrip("./")
+        if clean and clean not in discovered:
+            discovered.append(clean)
+
+    # 3. Standard chunk patterns
+    for m in re.finditer(r'[\'"]((?:/|https?://)?[^\'"]*chunk-[^\'"]*\.js)[\'"]', content):
+        p = m.group(1)
+        if p not in discovered:
+            discovered.append(p)
+
+    return discovered
+
+def _python_fallback_spider(path: str, depth: int = 2, target_domain: str = "") -> Dict[str, Any]:
     """Pure Python fallback for asset parsing and endpoint extraction."""
     endpoints = []
     links = []
@@ -149,23 +276,50 @@ def _python_fallback_spider(path: str) -> Dict[str, Any]:
     re_pattern = re.compile(r'[\'"]((?:/|https?://|wss?://)[a-zA-Z0-9_?&=/\-\.:%]+)[\'"]')
 
     files_to_read = []
-    if os.path.isdir(path):
-        for root, _, files in os.walk(path):
-            for f in files:
-                files_to_read.append(os.path.join(root, f))
-    elif os.path.isfile(path):
-        files_to_read.append(path)
+    html_count = 0
+    js_count = 0
+    max_html = 25
+    max_js = 50
+
+    safe_root = Path(_validate_path(path)).resolve()
+
+    if safe_root.is_dir():
+        for root, dirs, files in os.walk(str(safe_root), followlinks=False):
+            # Prune symlinked directories in-place
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+            for f in sorted(files):
+                fpath = os.path.join(root, f)
+                if os.path.islink(fpath):
+                    continue
+                resolved_f = Path(os.path.realpath(fpath)).resolve()
+                if not resolved_f.is_relative_to(safe_root):
+                    continue
+                is_html = f.endswith((".html", ".htm"))
+                is_js = f.endswith(".js")
+                if is_html and html_count >= max_html:
+                    continue
+                if is_js and js_count >= max_js:
+                    continue
+                if is_html:
+                    html_count += 1
+                elif is_js:
+                    js_count += 1
+                files_to_read.append(str(resolved_f))
+    elif safe_root.is_file() and not os.path.islink(path):
+        files_to_read.append(str(safe_root))
 
     for fpath in files_to_read:
         try:
+            if os.path.islink(fpath):
+                continue
             with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
+                content = f.read(settings.MAX_JS_ASSET_SIZE)
 
             if fpath.endswith((".html", ".htm")) or "<html" in content:
                 soup = BeautifulSoup(content, "html.parser")
                 for a in soup.find_all("a", href=True):
                     href = a["href"].strip()
-                    if href and not href.startswith(("javascript:", "mailto:")):
+                    if href and not href.startswith(("javascript:", "mailto:")) and _is_allowed_domain(href, target_domain):
                         links.append(href)
                 for s in soup.find_all("script", src=True):
                     scripts.append(s["src"].strip())
@@ -175,9 +329,15 @@ def _python_fallback_spider(path: str) -> Dict[str, Any]:
                         "method": form.get("method", "GET").upper()
                     })
 
+            # Webpack chunk resolver fallback
+            chunk_scripts = _resolve_webpack_chunks_python(content)
+            scripts.extend(chunk_scripts)
+
             for match in re_pattern.finditer(content):
                 p = match.group(1)
-                if len(p) < 3 or p.lower().endswith(junk_extensions):
+                if len(p) < 3 or p.lower().endswith(junk_extensions) or not _is_valid_route(p):
+                    continue
+                if not _is_allowed_domain(p, target_domain):
                     continue
                 endpoints.append({
                     "file_path": fpath,
@@ -207,7 +367,12 @@ def _python_fallback_spider(path: str) -> Dict[str, Any]:
 # Attack surface topology analyzer & tech fingerprinter with Python fallback
 # ---------------------------------------------------------------------------
 
-def run_surface_graph(endpoints: List[str], headers: Dict[str, str], content: str) -> Dict[str, Any]:
+def run_surface_graph(
+    endpoints: List[str],
+    headers: Dict[str, Any],
+    content: str,
+    findings: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
     """
     Build attack surface hierarchy, fingerprint tech stacks, and score surface risk.
     Validates output schema and falls back to Python if engine fails or crashes.
@@ -218,12 +383,65 @@ def run_surface_graph(endpoints: List[str], headers: Dict[str, str], content: st
         "headers": headers,
         "content": content[:100000]
     }
+    if findings:
+        payload["findings"] = [
+            {
+                "severity": str(f.get("severity", "INFO")).upper(),
+                "category": str(f.get("category", "")),
+                "title": str(f.get("title", "")),
+                "vendor_context": str(f.get("vendor_context", "")),
+                "tags": [str(t) for t in f.get("tags", [])]
+            }
+            for f in findings
+        ]
 
+    # Debug logging to verify IPC data flow
+    logger.debug("surface_graph payload - endpoints count: %d, headers count: %d, content length: %d", 
+                 len(endpoints), len(headers), len(payload["content"]))
+    logger.debug("surface_graph payload - headers keys: %s", list(headers.keys()))
+
+    # Dump temporary debug payload to disk for IPC audit (guarded against symlink/FIFO attacks in /tmp)
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    debug_payload_path = str(tmp_root / "surface_graph_payload_debug.json")
+    payload_file_ready = False
+    try:
+        if os.path.lexists(debug_payload_path):
+            st = os.lstat(debug_payload_path)
+            import stat as _stat
+            if _stat.S_ISLNK(st.st_mode) or not _stat.S_ISREG(st.st_mode):
+                os.unlink(debug_payload_path)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(debug_payload_path, flags, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        payload_file_ready = True
+        logger.debug("Dumped surface_graph IPC payload to %s", debug_payload_path)
+    except Exception as dump_err:
+        logger.warning("Failed to dump surface_graph debug payload to disk: %s", dump_err)
+    
     if engine is not None:
         try:
-            cmd = [engine, json.dumps(payload)]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            # Pass file path if written, otherwise fallback to raw JSON string argument
+            cmd = [engine, debug_payload_path] if payload_file_ready else [engine, json.dumps(payload)]
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                shell=False,
+                env=_get_sandbox_env(),
+                cwd=tempfile.gettempdir(),
+                close_fds=True,
+            )
             parsed = _extract_json_payload(res.stdout)
+            
+            # Debug logging for Go engine response
+            if parsed is not None and isinstance(parsed, dict):
+                techs = parsed.get("technologies") or []
+                logger.debug("surface_graph engine returned %d technologies", len(techs))
+                for tech in techs:
+                    logger.debug("Detected tech: %s (%s)", tech.get("name"), tech.get("category"))
+            
             # Schema validation
             if parsed is not None and isinstance(parsed, dict) and ("nodes" in parsed or "total_routes" in parsed):
                 return parsed
@@ -231,19 +449,32 @@ def run_surface_graph(endpoints: List[str], headers: Dict[str, str], content: st
         except Exception as exc:
             logger.warning("surface_graph engine execution failed, falling back to Python: %s", exc)
 
-    return _python_fallback_surface_graph(endpoints, headers, content)
+    return _python_fallback_surface_graph(endpoints, headers, content, findings=findings)
 
-def _python_fallback_surface_graph(endpoints: List[str], headers: Dict[str, str], content: str) -> Dict[str, Any]:
-    """Pure Python fallback for attack surface and topology analysis."""
+def _is_vendor_endpoint(ep: str) -> bool:
+    ep_lower = ep.lower()
+    vendor_indicators = (
+        "akamai", "tiqcdn", "tealium", "adobe", "demdex", "omtrdc",
+        "google-analytics", "googletagmanager", "hotjar", "segment"
+    )
+    return any(ind in ep_lower for ind in vendor_indicators)
+
+def _python_fallback_surface_graph(
+    endpoints: List[str],
+    headers: Dict[str, Any],
+    content: str,
+    findings: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """Pure Python fallback for attack surface and topology analysis with normalized scoring."""
     nodes = set()
     edges = []
     sensitive_routes = []
     ext_domains = set()
-    sensitive_keywords = ["admin", "login", "auth", "oauth", "token", "secret", "config", "actuator", "metrics", "upload"]
+    sensitive_keywords = ["admin", "login", "auth", "oauth", "token", "secret", "config", "actuator", "metrics", "upload", "graphql", "swagger"]
 
     for ep in endpoints:
         ep = ep.strip()
-        if not ep:
+        if not ep or not _is_valid_route(ep):
             continue
         if ep.startswith(("http://", "https://")):
             parsed = urlparse(ep)
@@ -255,9 +486,14 @@ def _python_fallback_surface_graph(endpoints: List[str], headers: Dict[str, str]
             if not path.startswith("/"):
                 path = "/" + path
 
+        if not _is_valid_route(path):
+            continue
+
         nodes.add(path)
-        if any(kw in path.lower() for kw in sensitive_keywords):
-            sensitive_routes.append(path)
+        # Exclude third-party vendor script paths from first-party sensitive routes
+        if not _is_vendor_endpoint(path):
+            if any(kw in path.lower() for kw in sensitive_keywords):
+                sensitive_routes.append(path)
 
     techs = []
     c_lower = content.lower()
@@ -268,15 +504,79 @@ def _python_fallback_surface_graph(endpoints: List[str], headers: Dict[str, str]
     if "vue" in c_lower or "data-v-" in c_lower:
         techs.append({"name": "Vue.js", "category": "Frontend Framework", "evidence": "Vue.js signature"})
 
+    # Enterprise Vendor & Server Checks (mirroring Go engine)
     for k, v in headers.items():
-        if k.lower() == "server":
-            techs.append({"name": v, "category": "Web Server", "evidence": f"Server: {v}"})
-        if k.lower() == "x-powered-by":
-            techs.append({"name": v, "category": "Backend", "evidence": f"X-Powered-By: {v}"})
+        k_lower = k.lower()
+        v_list = v if isinstance(v, list) else [str(v)]
+        for val in v_list:
+            val_str = str(val)
+            val_lower = val_str.lower()
+            if k_lower == "server":
+                if "cloudflare" in val_lower:
+                    techs.append({"name": "Cloudflare", "category": "CDN / Reverse Proxy", "evidence": f"Server: {val_str}"})
+                elif "nginx" in val_lower:
+                    techs.append({"name": "Nginx", "category": "Web Server", "evidence": f"Server: {val_str}"})
+                elif "apache" in val_lower:
+                    techs.append({"name": "Apache", "category": "Web Server", "evidence": f"Server: {val_str}"})
+                elif "akamai" in val_lower:
+                    techs.append({"name": "Akamai", "category": "CDN / Edge Platform", "evidence": f"Server: {val_str}"})
+                else:
+                    techs.append({"name": val_str, "category": "Web Server", "evidence": f"Server: {val_str}"})
+            if k_lower == "x-powered-by":
+                techs.append({"name": val_str, "category": "Backend Platform", "evidence": f"X-Powered-By: {val_str}"})
+            if k_lower == "set-cookie":
+                if any(sig in val_lower for sig in ["_abck", "bm_mi", "bm_so", "bm_sz", "akamai_session"]):
+                    techs.append({"name": "Akamai Bot Manager", "category": "Bot Protection / WAF", "evidence": "Akamai Bot Manager cookies detected"})
+                if any(sig in val_lower for sig in ["mbox", "amcv"]):
+                    techs.append({"name": "Adobe Experience Cloud", "category": "Marketing / Analytics", "evidence": "Adobe Experience Cloud cookies detected"})
 
-    risk_score = 15 + (len(sensitive_routes) * 5)
-    if risk_score > 95:
-        risk_score = 95
+    if any(sig in c_lower for sig in ["utag.sync", "utag.js", "tealium"]):
+        techs.append({"name": "Tealium iQ", "category": "Tag Management", "evidence": "Tealium iQ Tag Management detected"})
+
+    # Normalized Risk Score Calculation
+    risk_score = 10
+    dedup_sensitive = list(set(sensitive_routes))
+    if dedup_sensitive:
+        risk_score += min(15, len(dedup_sensitive) * 3)
+
+    if len(endpoints) > 30:
+        risk_score += 10
+    elif len(endpoints) > 10:
+        risk_score += 5
+
+    if findings:
+        crit_count = 0
+        high_count = 0
+        med_count = 0
+        low_count = 0
+        vendor_info_count = 0
+
+        for f in findings:
+            tags = f.get("tags", [])
+            is_vendor = (
+                bool(f.get("vendor_context"))
+                or str(f.get("title", "")).lower().startswith("[third-party]")
+                or any(t in ("third_party", "vendor_integration", "vendor_script") for t in tags)
+            )
+            sev = str(f.get("severity", "INFO")).upper()
+            if is_vendor or sev == "INFO":
+                vendor_info_count += 1
+            elif sev == "CRITICAL":
+                crit_count += 1
+            elif sev == "HIGH":
+                high_count += 1
+            elif sev == "MEDIUM":
+                med_count += 1
+            elif sev == "LOW":
+                low_count += 1
+
+        finding_impact = (crit_count * 25) + (high_count * 15) + (med_count * 5) + (low_count * 2)
+        vendor_impact = 1 if 0 < vendor_info_count < 5 else (2 if vendor_info_count >= 5 else 0)
+        composite = (risk_score // 2) + finding_impact + vendor_impact
+        if composite > risk_score:
+            risk_score = composite
+
+    risk_score = min(100, max(0, risk_score))
 
     return {
         "total_routes": len(nodes),
