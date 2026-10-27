@@ -17,31 +17,38 @@ else
     exit 1
 fi
 
+VENV_DIR="$SCRIPT_DIR/.venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
+
 setup_venv() {
     echo "[INFO] Verifying virtual environment..."
     local need_create=0
 
-    if [ ! -d ".venv" ] || [ ! -f ".venv/bin/activate" ] || [ ! -f ".venv/bin/python" ]; then
+    if [ ! -d "$VENV_DIR" ] || [ ! -f "$VENV_DIR/bin/activate" ] || [ ! -f "$VENV_PYTHON" ]; then
         need_create=1
-    elif ! .venv/bin/python -c "import sys" &>/dev/null; then
+    elif ! "$VENV_PYTHON" -c "import sys" &>/dev/null; then
         echo "[WARN] Existing virtual environment is invalid. Recreating..."
         need_create=1
+    else
+        source "$VENV_DIR/bin/activate"
+        if [ "$VIRTUAL_ENV" != "$VENV_DIR" ] || [ "$(command -v python || true)" != "$VENV_PYTHON" ]; then
+            echo "[WARN] Virtual environment path mismatch (directory moved). Recreating..."
+            need_create=1
+        fi
     fi
 
     if [ "$need_create" -eq 1 ]; then
         echo "[INFO] Initializing virtual environment (.venv)..."
-        rm -rf .venv
-        $PYTHON_BIN -m venv .venv
+        rm -rf "$VENV_DIR"
+        $PYTHON_BIN -m venv "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
     fi
 
-    echo "[INFO] Activating virtual environment..."
-    source .venv/bin/activate
-
     echo "[INFO] Checking dependencies..."
-    if ! python -c "import fastapi, uvicorn, jinja2, aiofiles, fpdf, pydantic, multipart, bs4, httpx" &>/dev/null; then
+    if ! "$VENV_PYTHON" -c "import fastapi, uvicorn, jinja2, aiofiles, fpdf, pydantic, multipart, bs4, httpx" &>/dev/null; then
         echo "[INFO] Installing dependencies from requirements.txt..."
-        python -m pip install -q --upgrade pip || true
-        python -m pip install -q -r requirements.txt
+        "$VENV_PYTHON" -m pip install -q --upgrade pip || true
+        "$VENV_PYTHON" -m pip install -q -r requirements.txt
     else
         echo "[INFO] Dependencies verified."
     fi
@@ -55,7 +62,7 @@ run_application() {
     echo "=================================================="
     echo "[INFO] Launching BlackRoute-Web Server..."
     echo ""
-    python blackroute_web.py
+    "$VENV_PYTHON" blackroute_web.py
 }
 
 build_engines() {
@@ -136,9 +143,9 @@ build_release() {
     echo "=================================================="
     echo "    BLACKROUTE-WEB - LINUX RELEASE PACKAGING"
     echo "=================================================="
-    python -m pip install -q pyinstaller
+    "$VENV_PYTHON" -m pip install -q pyinstaller
 
-    pyinstaller --noconfirm --onefile --clean --name "BlackRoute_Web_v1.0" \
+    "$VENV_DIR/bin/pyinstaller" --noconfirm --onefile --clean --name "BlackRoute_Web_v1.0" \
         --add-data "app/templates:app/templates" \
         --add-data "app/static:app/static" \
         --add-data "bin:bin" \
@@ -165,9 +172,9 @@ run_tests() {
     echo "     BLACKROUTE-WEB - AUTOMATED TEST SUITE"
     echo "=================================================="
     if [ $# -gt 0 ]; then
-        .venv/bin/python -m unittest "$@"
+        "$VENV_PYTHON" -m unittest "$@"
     else
-        .venv/bin/python -m unittest discover -s tests -v
+        "$VENV_PYTHON" -m unittest discover -s tests -v
     fi
 }
 
