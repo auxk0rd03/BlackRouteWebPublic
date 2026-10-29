@@ -1,15 +1,32 @@
+import os
+import json
 import sqlite3
 from typing import Dict, List, Optional, Tuple, Any
 from app.core.config import settings
+from app.core.security import encrypt_aes256_gcm
 
 def get_db_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(settings.DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL;")
     return conn
 
 def init_db() -> None:
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    # Off_Def_BackEnd_Framework.md Module 2: Streaming Recon Orchestrator targets schema
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS targets (
+            id INTEGER PRIMARY KEY,
+            domain TEXT NOT NULL UNIQUE,
+            ip TEXT,
+            port INTEGER,
+            tech_stack JSON,
+            status_code INTEGER,
+            last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS scans (
@@ -20,7 +37,8 @@ def init_db() -> None:
             pages_crawled INTEGER DEFAULT 0,
             endpoints_found INTEGER DEFAULT 0,
             findings_count INTEGER DEFAULT 0,
-            report_file TEXT
+            report_file TEXT,
+            encrypted_seal TEXT
         )
     ''')
 
@@ -55,6 +73,8 @@ def init_db() -> None:
     scan_columns = [col["name"] for col in cursor.fetchall()]
     if "risk_score" not in scan_columns:
         cursor.execute("ALTER TABLE scans ADD COLUMN risk_score INTEGER DEFAULT 0")
+    if "encrypted_seal" not in scan_columns:
+        cursor.execute("ALTER TABLE scans ADD COLUMN encrypted_seal TEXT")
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS endpoints (
@@ -71,6 +91,11 @@ def init_db() -> None:
 
     conn.commit()
     conn.close()
+    try:
+        if os.path.exists(settings.DB_PATH) and not os.path.islink(settings.DB_PATH):
+            os.chmod(settings.DB_PATH, 0o600)
+    except OSError:
+        pass
 
 def save_scan_record(
     target_url: str,
@@ -90,12 +115,15 @@ def save_scan_record(
     endpoints_found = len(endpoints)
     findings_count = len(findings)
 
+    seal_payload = json.dumps({"target_url": target_url, "findings_count": findings_count, "risk_score": risk_score}).encode("utf-8")
+    encrypted_seal = encrypt_aes256_gcm(seal_payload)
+
     cursor.execute(
         """
-        INSERT INTO scans (target_url, status, pages_crawled, endpoints_found, findings_count, report_file, risk_score)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO scans (target_url, status, pages_crawled, endpoints_found, findings_count, report_file, risk_score, encrypted_seal)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (target_url, status, pages_crawled, endpoints_found, findings_count, report_file, risk_score)
+        (target_url, status, pages_crawled, endpoints_found, findings_count, report_file, risk_score, encrypted_seal)
     )
     scan_id = cursor.lastrowid
 

@@ -1,0 +1,723 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:416e62e5-47c4-55d8-9db0-7f3c7c9cc27d",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-29T19:00:27Z",
+    "tools": [
+      {
+        "vendor": "CyberNest Holdings LLC",
+        "name": "NestSBOM RPGS Engine (sbom_scanner + repo_ingestor)",
+        "version": "1.0.0"
+      }
+    ],
+    "authors": [
+      {
+        "name": "William Ray Moore (Auxk0rd) - President and Chief Architect"
+      },
+      {
+        "name": "James Dwayne Jarrell (JD) - Chief Executive Officer"
+      }
+    ],
+    "supplier": {
+      "name": "CyberNest Holdings LLC (Internal Department: CyberNest Labs)",
+      "url": [
+        "https://cybernest.labs"
+      ]
+    },
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:generic/cybernest/BlackRoute-Web-Linux_VersionPopOS@1.0.0",
+      "name": "BlackRoute-Web-Linux_VersionPopOS",
+      "version": "1.0.0",
+      "purl": "pkg:generic/cybernest/BlackRoute-Web-Linux_VersionPopOS@1.0.0",
+      "cpe": "cpe:2.3:a:cybernest:BlackRoute-Web-Linux_VersionPopOS:1.0.0:*:*:*:*:*:*:*"
+    },
+    "properties": [
+      {
+        "name": "cisa:sbom_compliance",
+        "value": "EO-14028-CISA-2026-MINIMUM-ELEMENTS"
+      },
+      {
+        "name": "cybernest:legal_entity",
+        "value": "CyberNest Holdings LLC (Pennsylvania Manager-Managed Operating LLC)"
+      },
+      {
+        "name": "cybernest:internal_department",
+        "value": "CyberNest Labs (Internal Department - Not a separate legal entity)"
+      },
+      {
+        "name": "cybernest:sam_gov_uei_status",
+        "value": "NOT_YET_ASSIGNED (Pre-Registration)"
+      },
+      {
+        "name": "cybernest:zero_external_runtime_dependency_guarantee",
+        "value": "true"
+      },
+      {
+        "name": "cybernest:fips_140_3_compilation",
+        "value": "GOFIPS=1 / AWS-LC-FIPS"
+      },
+      {
+        "name": "cybernest:cmmc_posture",
+        "value": "Level 1 (FAR 52.204-21) & Level 2 (NIST SP 800-171)"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "application",
+      "bom-ref": "pkg:cargo/web_spider@0.1.0",
+      "supplier": {
+        "name": "CyberNest Holdings LLC (Auxk0rd)"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "web_spider",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/web_spider@0.1.0",
+      "cpe": "cpe:2.3:a:cybernest:web_spider:0.1.0:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "930668747bfc045940a5a9aa92e407a46be89dd6b0a4d1b6da5a2cad6901da32"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "LicenseRef-CyberNest-Proprietary"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "engines/web_spider/Cargo.toml"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "cargo-root"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/regex@1",
+      "supplier": {
+        "name": "Crates.io / Rust Ecosystem"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "regex",
+      "version": "1",
+      "purl": "pkg:cargo/regex@1",
+      "cpe": "cpe:2.3:a:rust-lang:regex:1:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "930668747bfc045940a5a9aa92e407a46be89dd6b0a4d1b6da5a2cad6901da32"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "engines/web_spider/Cargo.toml"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "cargo"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/serde@1.0",
+      "supplier": {
+        "name": "Crates.io / Rust Ecosystem"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "serde",
+      "version": "1.0",
+      "purl": "pkg:cargo/serde@1.0",
+      "cpe": "cpe:2.3:a:rust-lang:serde:1.0:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "930668747bfc045940a5a9aa92e407a46be89dd6b0a4d1b6da5a2cad6901da32"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "engines/web_spider/Cargo.toml"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "cargo"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:cargo/serde_json@1.0",
+      "supplier": {
+        "name": "Crates.io / Rust Ecosystem"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "serde_json",
+      "version": "1.0",
+      "purl": "pkg:cargo/serde_json@1.0",
+      "cpe": "cpe:2.3:a:rust-lang:serde_json:1.0:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "930668747bfc045940a5a9aa92e407a46be89dd6b0a4d1b6da5a2cad6901da32"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "engines/web_spider/Cargo.toml"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "cargo"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "bom-ref": "pkg:golang/surface_graph@1.0.0",
+      "supplier": {
+        "name": "CyberNest Holdings LLC (Auxk0rd)"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "surface_graph",
+      "version": "1.0.0",
+      "purl": "pkg:golang/surface_graph@1.0.0",
+      "cpe": "cpe:2.3:a:cybernest:surface_graph:1.0.0:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1bd9a78a2675815e5596dd1a0acfdd47516f6ddfa6f89ddf8cd53a115ef474af"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "LicenseRef-CyberNest-Proprietary"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "engines/surface_graph/go.mod"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "golang-root"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/fastapi@0.100.0",
+      "supplier": {
+        "name": "PyPI / Python Packaging Authority"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "fastapi",
+      "version": "0.100.0",
+      "purl": "pkg:pypi/fastapi@0.100.0",
+      "cpe": "cpe:2.3:a:pypi:fastapi:0.100.0:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a6f0deae2f1986148ce881b870476084cb64fae40438c45ea01330b294ffdc7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "requirements.txt"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "pypi"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/uvicorn@latest",
+      "supplier": {
+        "name": "PyPI / Python Packaging Authority"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "uvicorn",
+      "version": "latest",
+      "purl": "pkg:pypi/uvicorn@latest",
+      "cpe": "cpe:2.3:a:pypi:uvicorn:latest:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a6f0deae2f1986148ce881b870476084cb64fae40438c45ea01330b294ffdc7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "requirements.txt"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "pypi"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/jinja2@latest",
+      "supplier": {
+        "name": "PyPI / Python Packaging Authority"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "jinja2",
+      "version": "latest",
+      "purl": "pkg:pypi/jinja2@latest",
+      "cpe": "cpe:2.3:a:pypi:jinja2:latest:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a6f0deae2f1986148ce881b870476084cb64fae40438c45ea01330b294ffdc7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "requirements.txt"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "pypi"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/aiofiles@latest",
+      "supplier": {
+        "name": "PyPI / Python Packaging Authority"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "aiofiles",
+      "version": "latest",
+      "purl": "pkg:pypi/aiofiles@latest",
+      "cpe": "cpe:2.3:a:pypi:aiofiles:latest:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a6f0deae2f1986148ce881b870476084cb64fae40438c45ea01330b294ffdc7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "requirements.txt"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "pypi"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/fpdf2@latest",
+      "supplier": {
+        "name": "PyPI / Python Packaging Authority"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "fpdf2",
+      "version": "latest",
+      "purl": "pkg:pypi/fpdf2@latest",
+      "cpe": "cpe:2.3:a:pypi:fpdf2:latest:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a6f0deae2f1986148ce881b870476084cb64fae40438c45ea01330b294ffdc7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "requirements.txt"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "pypi"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pydantic@2.0.0",
+      "supplier": {
+        "name": "PyPI / Python Packaging Authority"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "pydantic",
+      "version": "2.0.0",
+      "purl": "pkg:pypi/pydantic@2.0.0",
+      "cpe": "cpe:2.3:a:pypi:pydantic:2.0.0:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a6f0deae2f1986148ce881b870476084cb64fae40438c45ea01330b294ffdc7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "requirements.txt"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "pypi"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/python-multipart@latest",
+      "supplier": {
+        "name": "PyPI / Python Packaging Authority"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "python-multipart",
+      "version": "latest",
+      "purl": "pkg:pypi/python-multipart@latest",
+      "cpe": "cpe:2.3:a:pypi:python-multipart:latest:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a6f0deae2f1986148ce881b870476084cb64fae40438c45ea01330b294ffdc7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "requirements.txt"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "pypi"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/beautifulsoup4@latest",
+      "supplier": {
+        "name": "PyPI / Python Packaging Authority"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "beautifulsoup4",
+      "version": "latest",
+      "purl": "pkg:pypi/beautifulsoup4@latest",
+      "cpe": "cpe:2.3:a:pypi:beautifulsoup4:latest:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a6f0deae2f1986148ce881b870476084cb64fae40438c45ea01330b294ffdc7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "requirements.txt"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "pypi"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/httpx@latest",
+      "supplier": {
+        "name": "PyPI / Python Packaging Authority"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "httpx",
+      "version": "latest",
+      "purl": "pkg:pypi/httpx@latest",
+      "cpe": "cpe:2.3:a:pypi:httpx:latest:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a6f0deae2f1986148ce881b870476084cb64fae40438c45ea01330b294ffdc7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "requirements.txt"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "pypi"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/sse-starlette@2.0.0",
+      "supplier": {
+        "name": "PyPI / Python Packaging Authority"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "sse-starlette",
+      "version": "2.0.0",
+      "purl": "pkg:pypi/sse-starlette@2.0.0",
+      "cpe": "cpe:2.3:a:pypi:sse-starlette:2.0.0:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a6f0deae2f1986148ce881b870476084cb64fae40438c45ea01330b294ffdc7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "requirements.txt"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "pypi"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/esprima@4.0.1",
+      "supplier": {
+        "name": "PyPI / Python Packaging Authority"
+      },
+      "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
+      "name": "esprima",
+      "version": "4.0.1",
+      "purl": "pkg:pypi/esprima@4.0.1",
+      "cpe": "cpe:2.3:a:pypi:esprima:4.0.1:*:*:*:*:*:*:*",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a6f0deae2f1986148ce881b870476084cb64fae40438c45ea01330b294ffdc7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT OR BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "cybernest:source_file",
+          "value": "requirements.txt"
+        },
+        {
+          "name": "cybernest:ecosystem",
+          "value": "pypi"
+        },
+        {
+          "name": "cybernest:fips_140_3",
+          "value": "validated"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:generic/cybernest/BlackRoute-Web-Linux_VersionPopOS@1.0.0",
+      "dependsOn": [
+        "pkg:cargo/web_spider@0.1.0",
+        "pkg:cargo/regex@1",
+        "pkg:cargo/serde@1.0",
+        "pkg:cargo/serde_json@1.0",
+        "pkg:golang/surface_graph@1.0.0",
+        "pkg:pypi/fastapi@0.100.0",
+        "pkg:pypi/uvicorn@latest",
+        "pkg:pypi/jinja2@latest",
+        "pkg:pypi/aiofiles@latest",
+        "pkg:pypi/fpdf2@latest",
+        "pkg:pypi/pydantic@2.0.0",
+        "pkg:pypi/python-multipart@latest",
+        "pkg:pypi/beautifulsoup4@latest",
+        "pkg:pypi/httpx@latest",
+        "pkg:pypi/sse-starlette@2.0.0",
+        "pkg:pypi/esprima@4.0.1"
+      ]
+    }
+  ],
+  "signature": {
+    "algorithm": "Ed25519",
+    "key_id": "CN-ED25519-99AC51E14879E456",
+    "public_key": "99ac51e14879e456c9747f49ff458f77e3fb3d60ec822762e6ac5ef5438f6315",
+    "signature": "9ab664169e10f0b8a0fe82d0da2b6cc2bfa69b6cc55fd5f3f3fd55f4fc4c67da4baa90070ded861b28fa50df27efd95146f96d82b96b2ff9c7809e0874a0fb0e"
+  }
+}

@@ -1,0 +1,199 @@
+:root {
+  --bg-void: #080C12;
+  --bg-panel: #101420;
+  --bg-purple: #261B38;
+  --border-muted: #1E2436;
+  --accent-purple: #523B78;
+  --accent-cyan: #36A19D;
+  --text-primary: #DCD5C6;
+  --text-muted: #687888;
+  --status-neg: #B85D78;
+  --status-warn: #C9A654;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Fira Code', monospace;
+
+  /* Compatibility mappings for existing components */
+  --bg-color: var(--bg-void);
+  --surface-color: var(--bg-panel);
+  --text-secondary: var(--text-muted);
+  --accent-color: var(--accent-cyan);
+  --accent-hover: var(--accent-cyan);
+  --accent-active: var(--bg-purple);
+  --sub-accent: var(--accent-cyan);
+  --success-color: var(--accent-cyan);
+  --warning-color: var(--status-warn);
+  --error-color: var(--status-neg);
+  --border-primary: var(--accent-cyan);
+  --border-secondary: var(--accent-purple);
+  --font-stack: var(--font-mono);
+}
+
+/* 1. Global Orthogonal Enforcement */
+*, *::before, *::after {
+  box-sizing: border-box;
+  border-radius: 0px !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-void);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  padding: 24px;
+  /* 90s OVA CRT Scanline Overlay */
+  background-image: linear-gradient(
+    rgba(18, 16, 16, 0) 50%, 
+    rgba(0, 0, 0, 0.28) 50%
+  );
+  background-size: 100% 4px;
+}
+
+/* 2. Exposed OVA Wireframe Outer Shell */
+.frame-shell {
+  max-width: 1400px;
+  margin: 0 auto;
+  border-right: 1px solid var(--accent-cyan);
+  border-bottom: 1px solid var(--accent-cyan);
+  padding-right: 16px;
+  padding-bottom: 16px;
+}
+
+/* 3. Top Telemetry Ticker */
+.status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid var(--accent-cyan);
+  background: var(--bg-panel);
+  padding: 6px 12px;
+  margin-bottom: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.badge-cv {
+  background: var(--accent-cyan);
+  color: var(--bg-void);
+  font-weight: 700;
+  padding: 1px 6px;
+  margin-right: 8px;
+}
+
+/* 4. Rectangular Grid & Panels */
+.grid-workspace {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--accent-purple);
+  padding: 12px;
+}
+
+.panel-header {
+  border-bottom: 1px solid var(--accent-cyan);
+  padding-bottom: 6px;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  color: var(--accent-cyan);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* 5. Vocaloid Bank Navigation / HTMX Triggers */
+.nav-bank {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+button, .btn-bank, .btn {
+  background: var(--bg-void);
+  color: var(--text-primary);
+  border: 1px solid var(--accent-purple);
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: background-color 50ms linear, border-color 50ms linear, color 50ms linear;
+}
+
+button:hover, .btn-bank:hover, .btn-bank.active, .btn:hover, .btn.active {
+  background: var(--bg-purple);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+/* 6. Synth Step-Meters */
+.param-block {
+  margin-bottom: 10px;
+}
+
+.param-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.step-meter {
+  color: var(--accent-cyan);
+  letter-spacing: 2px;
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 7. Fintech Ledger Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+th, td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-muted);
+}
+
+th {
+  color: var(--text-muted);
+  font-weight: 400;
+  border-bottom: 1px solid var(--accent-purple);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+tr:hover {
+  background: var(--bg-purple);
+}
+
+.num-right { text-align: right; }
+.val-pos   { color: var(--accent-cyan); }
+.val-neg   { color: var(--status-neg); }
+.val-warn  { color: var(--status-warn); }
+.val-muted { color: var(--text-muted); }
+
+/* 8. HTMX Request States */
+.htmx-indicator {
+  opacity: 0;
+  color: var(--status-warn);
+  transition: opacity 75ms linear;
+}
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+  opacity: 1;
+}

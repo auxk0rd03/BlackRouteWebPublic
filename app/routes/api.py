@@ -22,6 +22,9 @@ from app.core.security import (
     sanitize_target_input,
     sanitize_filename,
     resolve_sandboxed_path,
+    verify_cmmc_controls,
+    sense_network_medium_802,
+    sign_payload_ed25519,
 )
 from app.core.scanner import (
     WebScanner,
@@ -1022,3 +1025,33 @@ async def export_batch_zip():
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename={zip_filename}"}
     )
+
+
+@router.get("/compliance/cmmc")
+@router.get("/compliance/stig")
+async def export_cmmc_stig_compliance():
+    """Exports CMMC Level 1 & Level 2 (NIST SP 800-171) and DISA STIG verification ledger."""
+    return JSONResponse(content=verify_cmmc_controls())
+
+
+@router.get("/network-sense")
+async def export_network_sense():
+    """IEEE 802.3 (Wired) & IEEE 802.11w (Wireless PMF) Medium Sensing Validation."""
+    return JSONResponse(content=sense_network_medium_802())
+
+
+@router.get("/sbom/cyclonedx")
+async def export_sbom_cyclonedx():
+    sbom_path = Path(settings.BASE_DIR) / "SBOM.cyclonedx.json"
+    if sbom_path.is_file() and not sbom_path.is_symlink():
+        return JSONResponse(content=json.loads(sbom_path.read_text(encoding="utf-8")))
+    return JSONResponse(content={"bomFormat": "CycloneDX", "specVersion": "1.5", "status": "pending_build"})
+
+
+@router.get("/sbom/spdx")
+async def export_sbom_spdx():
+    sbom_path = Path(settings.BASE_DIR) / "SBOM.spdx.json"
+    if sbom_path.is_file() and not sbom_path.is_symlink():
+        return JSONResponse(content=json.loads(sbom_path.read_text(encoding="utf-8")))
+    return JSONResponse(content={"spdxVersion": "SPDX-2.3", "status": "pending_build"})
+

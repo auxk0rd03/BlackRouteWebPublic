@@ -1144,6 +1144,68 @@ class TestBlackRouteWebAudit(unittest.TestCase):
                 self.assertIn("Output/Targ001/blackroute_triage_scan_1.md", names)
                 self.assertNotIn("Output/Targ001/stolen_hosts.md", names)
 
+    def test_cmmc_stig_cwe_and_ast_context_hardening(self):
+        """Verify CWE-22, CWE-346, AES-256-GCM, Ed25519, AST Context Analyzer, and CMMC/STIG endpoints."""
+        import tempfile
+        from fastapi.testclient import TestClient
+        from blackroute_web import app
+        from app.core.security import (
+            sanitize_relative_path,
+            safe_resolve_under,
+            verify_host_and_origin,
+            encrypt_aes256_gcm,
+            decrypt_aes256_gcm,
+            get_or_create_ed25519_identity,
+            sign_payload_ed25519,
+            sense_network_medium_802,
+            verify_cmmc_controls,
+        )
+        from app.core.auditor_ast_context import analyze_response_ast_context, ContextualASTAddon
+
+        # 1. CWE-22 Path Sanitization
+        self.assertEqual(sanitize_relative_path("reports/out.pdf"), "reports/out.pdf")
+        for bad in ["../etc/passwd", "/etc/shadow", "a\\b", "-flag"]:
+            with self.assertRaises(ValueError):
+                sanitize_relative_path(bad)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            resolved = safe_resolve_under(tmp, "sub/file.txt")
+            self.assertTrue(str(resolved).startswith(os.path.realpath(tmp)))
+
+        # 2. CWE-346 Host & Origin Validation
+        self.assertTrue(verify_host_and_origin("127.0.0.1:8000", "http://127.0.0.1:8000", None))
+        self.assertFalse(verify_host_and_origin("evil.com", None, None))
+        self.assertFalse(verify_host_and_origin("127.0.0.1:8000", "https://evil.com", None))
+
+        # 3. AES-256-GCM & Ed25519 Enclave
+        ct = encrypt_aes256_gcm(b"CLASSIFIED_CUI_RECORD")
+        pt = decrypt_aes256_gcm(ct)
+        self.assertEqual(pt, b"CLASSIFIED_CUI_RECORD")
+        ident = get_or_create_ed25519_identity()
+        self.assertIn("public_key_hex", ident)
+        sig = sign_payload_ed25519(b"audit-payload")
+        self.assertTrue(len(sig["signature"]) >= 64)
+
+        # 4. Module 3 (AST Reflection Context)
+        sample_html = '<html><body><a href="javascript:Canary123" onclick="eval(Canary123)">link</a><script>var x = "Canary123";</script></body></html>'
+        ast_findings = analyze_response_ast_context(
+            "https://example.com/search", sample_html, canary="Canary123"
+        )
+        self.assertTrue(len(ast_findings) >= 2)
+        addon = ContextualASTAddon(canary="Canary123")
+        self.assertEqual(addon.canary, "Canary123")
+
+        # 5. Compliance & Network Sensing API Endpoints
+        net_report = sense_network_medium_802()
+        self.assertEqual(net_report["standard"], "IEEE 802.3 / IEEE 802.11w-2009")
+        cmmc = verify_cmmc_controls()
+        self.assertEqual(cmmc["sprs_score"], 110)
+
+        client = TestClient(app)
+        self.assertEqual(client.get("/api/compliance/cmmc").status_code, 200)
+        self.assertEqual(client.get("/api/compliance/stig").status_code, 200)
+        self.assertEqual(client.get("/api/network-sense").status_code, 200)
+
 if __name__ == "__main__":
     unittest.main()
 

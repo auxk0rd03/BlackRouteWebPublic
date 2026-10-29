@@ -4,10 +4,17 @@ __pycache__/
 *.pyc
 *$py.class
 
-# Virtual environments
+# Virtual environments & configs
 .venv/
 venv/
 ENV/
+env/
+pyvenv.cfg
+.python-version
+.env
+.env.*
+.pytest_cache/
+*.egg-info/
 
 # Rust build artifacts
 engines/**/target/
@@ -15,6 +22,8 @@ engines/web_spider/target/
 
 # Temporary data & databases
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 blackroute_web.db
 .tmp/

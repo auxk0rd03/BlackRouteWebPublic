@@ -1,11 +1,36 @@
 #!/usr/bin/env bash
 # BlackRoute-Web Unified Linux Launcher & Build Protocol
 # CyberNest Labs - Enterprise Web Application Security Engine
+# Hardened for CWE-377 (Symlink defense, umask 077, 0700/0600 permissions),
+# CWE-114 (Explicit APP_PID tracking, zero fuser -k), FIPS 140-3 (GOFIPS=1),
+# and Automated CycloneDX 1.5 & SPDX 2.3 JSON SBOM Generation.
 
-set -eo pipefail
+set -euo pipefail
+IFS=$'\n\t'
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+APP_PID=""
+LOG_DIR="${HOME}/.cache/blackroute_web"
+mkdir -p -m 700 "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/session.log"
+[ -L "$LOG_FILE" ] && rm -f "$LOG_FILE"
+touch "$LOG_FILE"
+chmod 600 "$LOG_FILE"
+
+cleanup() {
+    local exit_code=$?
+    trap - EXIT INT TERM
+    if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
+        kill -TERM "$APP_PID" 2>/dev/null || true
+        sleep 0.2
+        kill -KILL "$APP_PID" 2>/dev/null || true
+    fi
+    exit "$exit_code"
+}
+trap cleanup EXIT INT TERM
 
 PYTHON_BIN=""
 if command -v python3 &>/dev/null; then
@@ -88,10 +113,11 @@ build_engines() {
 
         if [ -f "$spider_dir/Cargo.toml" ]; then
             echo "[BUILD] Compiling Rust Engine: web_spider..."
-            if cargo build --release --offline --manifest-path "$spider_dir/Cargo.toml" 2>&1 | while IFS= read -r line; do echo "  [CARGO] $line"; done; then
+            if RUSTFLAGS="--remap-path-prefix=${SCRIPT_DIR}=. --remap-path-prefix=${HOME}=~" cargo build --release --offline --manifest-path "$spider_dir/Cargo.toml" 2>&1 | while IFS= read -r line; do echo "  [CARGO] $line"; done; then
                 local target_bin="$spider_dir/target/release/web_spider"
                 if [ -f "$target_bin" ]; then
                     cp "$target_bin" "$BIN_DIR/web_spider"
+                    strip --strip-all "$BIN_DIR/web_spider" 2>/dev/null || true
                     chmod +x "$BIN_DIR/web_spider"
                     echo "[SUCCESS] web_spider -> bin/web_spider"
                     RUST_COUNT=$((RUST_COUNT + 1))
@@ -115,8 +141,8 @@ build_engines() {
         local graph_dir="$ENGINES_DIR/surface_graph"
 
         if [ -f "$graph_dir/go.mod" ]; then
-            echo "[BUILD] Compiling Go Engine: surface_graph..."
-            if (cd "$graph_dir" && go build -o "$BIN_DIR/surface_graph" -ldflags="-s -w" .) 2>&1 | while IFS= read -r line; do echo "  [GO] $line"; done; then
+            echo "[BUILD] Compiling Go Engine: surface_graph (GOFIPS=1)..."
+            if (cd "$graph_dir" && GOFIPS=1 GODEBUG=fips140=on CGO_ENABLED=0 go build -trimpath -o "$BIN_DIR/surface_graph" -ldflags="-s -w" .) 2>&1 | while IFS= read -r line; do echo "  [GO] $line"; done; then
                 if [ -f "$BIN_DIR/surface_graph" ]; then
                     chmod +x "$BIN_DIR/surface_graph"
                     echo "[SUCCESS] surface_graph -> bin/surface_graph"
@@ -128,6 +154,13 @@ build_engines() {
         fi
     else
         echo "[WARN] Go compiler not detected. Go engine build skipped."
+    fi
+
+    # 3. Automated CycloneDX & SPDX JSON SBOM Generation
+    if [ -f "$SCRIPT_DIR/../NestSBOM/sbom_cli.py" ]; then
+        echo "[SBOM] Generating CycloneDX 1.5, SPDX 2.3 & CISA SBOM manifests..."
+        "$PYTHON_BIN" "$SCRIPT_DIR/../NestSBOM/sbom_cli.py" --repo "$SCRIPT_DIR" --out-dir "$SCRIPT_DIR" >/dev/null
+        sed -i "s|${SCRIPT_DIR}|https://github.com/auxk0rd03/BlackRouteWebPublic.git|g" "$SCRIPT_DIR/SBOM.md" 2>/dev/null || true
     fi
 
     echo ""
@@ -178,7 +211,7 @@ run_tests() {
     fi
 }
 
-case "$1" in
+case "${1:-}" in
     launch|run)
         run_application
         ;;
