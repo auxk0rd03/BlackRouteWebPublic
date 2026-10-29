@@ -2,7 +2,6 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey.svg)](https://kernel.org)
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Engine](https://img.shields.io/badge/polyglot-Rust%20%7C%20Go%20%7C%20Python-orange.svg)](https://cybernest.labs)
 
 **BlackRoute-Web** is an automated dynamic application security testing (DAST), web attack surface mapping, and security posture auditing engine designed for web applications, REST/GraphQL APIs, and distributed cloud services.
