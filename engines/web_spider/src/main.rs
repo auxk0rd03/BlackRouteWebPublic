@@ -60,19 +60,27 @@ pub const MAX_HTML_PAGES: usize = 25;
 pub const MAX_JS_FILES: usize = 50;
 
 const JUNK_EXTENSIONS: &[&str] = &[
-    ".png", ".jpg", ".jpeg", ".svg", ".gif", ".ico", ".woff", ".woff2",
-    ".ttf", ".css", ".scss", ".less", ".mp4", ".webm", ".avi", ".mp3",
+    ".png", ".jpg", ".jpeg", ".svg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".css", ".scss",
+    ".less", ".mp4", ".webm", ".avi", ".mp3",
 ];
 
 const JUNK_PATHS: &[&str] = &[
-    "/static/css/", "/assets/fonts/", "http://www.w3.org", "https://schema.org",
-    "facebook.com", "twitter.com", "linkedin.com", "instagram.com", "youtube.com",
-    "google-analytics.com", "googletagmanager.com",
+    "/static/css/",
+    "/assets/fonts/",
+    "http://www.w3.org",
+    "https://schema.org",
+    "facebook.com",
+    "twitter.com",
+    "linkedin.com",
+    "instagram.com",
+    "youtube.com",
+    "google-analytics.com",
+    "googletagmanager.com",
 ];
 
 const HIGH_VALUE_KEYWORDS: &[&str] = &[
-    "/api/", "/v1/", "/v2/", "/v3/", "graphql", "metrics",
-    "admin", "auth", "token", "secret", "config", "internal", "actuator",
+    "/api/", "/v1/", "/v2/", "/v3/", "graphql", "metrics", "admin", "auth", "token", "secret",
+    "config", "internal", "actuator",
 ];
 
 /// CWE-22 Mitigation: Multi-stage relative path sanitization
@@ -150,23 +158,28 @@ pub fn build_non_rfc_frame_mutations(host: &str) -> Vec<ProtocolMutationFrame> {
         ProtocolMutationFrame {
             mutation_id: "MUT-H1-CLTE-OBF".to_string(),
             protocol: "HTTP/1.1".to_string(),
-            target_gap: "Layer-7 RFC vertical-tab Transfer-Encoding parser differential".to_string(),
+            target_gap: "Layer-7 RFC vertical-tab Transfer-Encoding parser differential"
+                .to_string(),
             raw_wire_hex: to_hex(cl_te_raw.as_bytes()),
-            description: "Non-RFC whitespace padding (0x0b) before chunked transfer encoding".to_string(),
+            description: "Non-RFC whitespace padding (0x0b) before chunked transfer encoding"
+                .to_string(),
         },
         ProtocolMutationFrame {
             mutation_id: "MUT-H1-DUP-CL".to_string(),
             protocol: "HTTP/1.1".to_string(),
             target_gap: "Duplicate Content-Length header desynchronization".to_string(),
             raw_wire_hex: to_hex(dup_cl_raw.as_bytes()),
-            description: "Dual conflicting Content-Length headers for reverse-proxy differential testing".to_string(),
+            description:
+                "Dual conflicting Content-Length headers for reverse-proxy differential testing"
+                    .to_string(),
         },
         ProtocolMutationFrame {
             mutation_id: "MUT-H2-FRAME-DESYNC".to_string(),
             protocol: "HTTP/2".to_string(),
             target_gap: "Out-of-order HTTP/2 preface & trailing HEADERS frame delivery".to_string(),
             raw_wire_hex: to_hex(h2_desync_raw.as_bytes()),
-            description: "Binary HTTP/2 connection preface and empty SETTINGS frame boundary probe".to_string(),
+            description: "Binary HTTP/2 connection preface and empty SETTINGS frame boundary probe"
+                .to_string(),
         },
     ]
 }
@@ -178,7 +191,9 @@ fn compile_regex(pattern: &str) -> Option<Regex> {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: web_spider <file_path | dir <directory>> [--depth <N>] [--domain <domain>]");
+        eprintln!(
+            "Usage: web_spider <file_path | dir <directory>> [--depth <N>] [--domain <domain>]"
+        );
         process::exit(1);
     }
 
@@ -249,10 +264,20 @@ pub fn is_allowed_domain(url: &str, target_domain: &str) -> bool {
 
     let host = if let Some(idx) = url.find("://") {
         let rest = &url[idx + 3..];
-        rest.split('/').next().unwrap_or("").split(':').next().unwrap_or("")
+        rest.split('/')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("")
     } else if url.starts_with("//") {
         let rest = &url[2..];
-        rest.split('/').next().unwrap_or("").split(':').next().unwrap_or("")
+        rest.split('/')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("")
     } else {
         return true;
     };
@@ -316,7 +341,10 @@ fn process_directory_bfs(dir_path: &str, max_depth: usize, target_domain: &str) 
                     if child_path.is_dir() && curr_depth + 1 <= max_depth {
                         queue.push_back((child_path, curr_depth + 1));
                     } else if child_path.is_file() {
-                        let fname = child_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                        let fname = child_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("");
                         let is_html = fname.ends_with(".html") || fname.ends_with(".htm");
                         let is_js = fname.ends_with(".js");
 
@@ -333,7 +361,8 @@ fn process_directory_bfs(dir_path: &str, max_depth: usize, target_domain: &str) 
                             js_files_processed += 1;
                         }
 
-                        let file_res = process_file(child_path.to_str().unwrap_or(""), target_domain);
+                        let file_res =
+                            process_file(child_path.to_str().unwrap_or(""), target_domain);
 
                         for ep in file_res.endpoints {
                             if !seen_paths.contains(&ep.path) {
@@ -343,7 +372,9 @@ fn process_directory_bfs(dir_path: &str, max_depth: usize, target_domain: &str) 
                         }
 
                         for link in file_res.links {
-                            if !seen_links.contains(&link) && is_allowed_domain(&link, target_domain) {
+                            if !seen_links.contains(&link)
+                                && is_allowed_domain(&link, target_domain)
+                            {
                                 seen_links.insert(link.clone());
                                 combined.links.push(link);
                             }
@@ -391,7 +422,13 @@ fn process_file(file_path: &str, target_domain: &str) -> SpiderResult {
     let mut forms = Vec::new();
 
     if is_html {
-        extract_html_assets(&content, &mut links, &mut scripts, &mut forms, target_domain);
+        extract_html_assets(
+            &content,
+            &mut links,
+            &mut scripts,
+            &mut forms,
+            target_domain,
+        );
     }
 
     extract_chunk_manifests(&content, &mut scripts);
@@ -432,7 +469,9 @@ fn extract_html_assets(
         }
     }
 
-    if let Some(script_src_re) = compile_regex(r#"(?i)<script\s+[^>]*src\s*=\s*['"]([^'">\s]+)['"]"#) {
+    if let Some(script_src_re) =
+        compile_regex(r#"(?i)<script\s+[^>]*src\s*=\s*['"]([^'">\s]+)['"]"#)
+    {
         for cap in script_src_re.captures_iter(content) {
             if let Some(src) = cap.get(1) {
                 scripts.push(src.as_str().trim().to_string());
@@ -447,8 +486,14 @@ fn extract_html_assets(
     ) {
         for cap in form_re.captures_iter(content) {
             let attrs = cap.get(1).map_or("", |m| m.as_str());
-            let action = action_re.captures(attrs).and_then(|c| c.get(1)).map_or("/", |m| m.as_str());
-            let method = method_re.captures(attrs).and_then(|c| c.get(1)).map_or("GET", |m| m.as_str());
+            let action = action_re
+                .captures(attrs)
+                .and_then(|c| c.get(1))
+                .map_or("/", |m| m.as_str());
+            let method = method_re
+                .captures(attrs)
+                .and_then(|c| c.get(1))
+                .map_or("GET", |m| m.as_str());
 
             forms.push(FormFinding {
                 action: action.to_string(),
@@ -461,7 +506,8 @@ fn extract_html_assets(
 fn resolve_webpack_chunks(content: &str, scripts: &mut Vec<String>) {
     let needles = ["__webpack_require__.u", "jsonpScriptSrc"];
     let prefix_re_opt = compile_regex(r#"['"]((?:static/|assets/)?js/?)['"]"#);
-    let map_entry_re_opt = compile_regex(r#"(?:"?([a-zA-Z0-9_\-]+)"?\s*:\s*["']([a-zA-Z0-9_\-]+)["'])"#);
+    let map_entry_re_opt =
+        compile_regex(r#"(?:"?([a-zA-Z0-9_\-]+)"?\s*:\s*["']([a-zA-Z0-9_\-]+)["'])"#);
 
     for needle in &needles {
         let mut start_idx = 0;
@@ -490,7 +536,8 @@ fn resolve_webpack_chunks(content: &str, scripts: &mut Vec<String>) {
                         let chunk_id = cid.as_str();
                         let hash_val = hash.as_str();
 
-                        let resolved_name = format!("{}{}.{}{}", prefix, chunk_id, hash_val, suffix);
+                        let resolved_name =
+                            format!("{}{}.{}{}", prefix, chunk_id, hash_val, suffix);
                         if !scripts.contains(&resolved_name) {
                             scripts.push(resolved_name);
                         }
@@ -572,7 +619,9 @@ fn extract_chunk_manifests(content: &str, scripts: &mut Vec<String>) {
         }
     }
 
-    if let Some(webpack_chunk_loading_re) = compile_regex(r#"__webpack_require__\.p\s*\+\s*['"]([^'"]+)['"]"#) {
+    if let Some(webpack_chunk_loading_re) =
+        compile_regex(r#"__webpack_require__\.p\s*\+\s*['"]([^'"]+)['"]"#)
+    {
         for cap in webpack_chunk_loading_re.captures_iter(content) {
             if let Some(chunk_base) = cap.get(1) {
                 let base = chunk_base.as_str().trim();
@@ -616,10 +665,39 @@ pub fn is_valid_endpoint(path: &str) -> bool {
     }
 
     let invalid_tokens = [
-        "&&", "||", "return", "function", "var ", "let ", "const ",
-        "test(", "match(", "replace(", "typeof ", "undefined", "null",
-        ";", "{", "}", "[", "]", "(", ")", "=>", "<", ">", "$", "\\",
-        ",", " ", "\t", "\n", "\r", "\"", "'", "`",
+        "&&",
+        "||",
+        "return",
+        "function",
+        "var ",
+        "let ",
+        "const ",
+        "test(",
+        "match(",
+        "replace(",
+        "typeof ",
+        "undefined",
+        "null",
+        ";",
+        "{",
+        "}",
+        "[",
+        "]",
+        "(",
+        ")",
+        "=>",
+        "<",
+        ">",
+        "$",
+        "\\",
+        ",",
+        " ",
+        "\t",
+        "\n",
+        "\r",
+        "\"",
+        "'",
+        "`",
     ];
     for token in invalid_tokens.iter() {
         if path.contains(token) {
@@ -637,7 +715,9 @@ pub fn is_valid_endpoint(path: &str) -> bool {
 fn extract_dynamic_routes(content: &str, endpoints: &mut Vec<EndpointFinding>, file_path: &str) {
     let mut seen_paths: HashSet<String> = HashSet::new();
 
-    if let Some(rest_param_re) = compile_regex(r#"['"]((?:/|https?://)[a-zA-Z0-9_\-\./]*:[a-zA-Z0-9_]+[a-zA-Z0-9_\-\./]*)['"]"#) {
+    if let Some(rest_param_re) = compile_regex(
+        r#"['"]((?:/|https?://)[a-zA-Z0-9_\-\./]*:[a-zA-Z0-9_]+[a-zA-Z0-9_\-\./]*)['"]"#,
+    ) {
         for cap in rest_param_re.captures_iter(content) {
             if let Some(path) = cap.get(1) {
                 let route = path.as_str().trim();
@@ -705,7 +785,8 @@ fn extract_endpoint_patterns(
     target_domain: &str,
 ) {
     let is_minified = content.len() > 1000 && content.matches('\n').count() < 5;
-    let pattern = match compile_regex(r#"['"]((?:/|https?://|wss?://)[a-zA-Z0-9_?&=/\-\.:%]+)['"]"#) {
+    let pattern = match compile_regex(r#"['"]((?:/|https?://|wss?://)[a-zA-Z0-9_?&=/\-\.:%]+)['"]"#)
+    {
         Some(re) => re,
         None => return,
     };
@@ -733,7 +814,9 @@ fn extract_endpoint_patterns(
 
         if let Some(idx) = seen_paths.get(path) {
             if let Some(finding) = endpoints.get_mut(*idx) {
-                if finding.confidence < 0.9 && HIGH_VALUE_KEYWORDS.iter().any(|k| path_lower.contains(k)) {
+                if finding.confidence < 0.9
+                    && HIGH_VALUE_KEYWORDS.iter().any(|k| path_lower.contains(k))
+                {
                     finding.confidence = 0.95;
                 }
             }

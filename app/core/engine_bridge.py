@@ -18,13 +18,21 @@ _ALLOWED_ENGINES = {"web_spider", "surface_graph"}
 def _get_sandbox_env() -> Dict[str, str]:
     """Return a minimal, scrubbed environment for child engine processes to prevent secret/host env leakage."""
     tmp_dir = tempfile.gettempdir()
-    return {
+    env: Dict[str, str] = {
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "HOME": tmp_dir,
         "TMPDIR": tmp_dir,
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
+        "GOFIPS": "1",
+        "GODEBUG": "fips140=on",
     }
+    if os.name == "nt":
+        for win_var in ("SYSTEMROOT", "COMSPEC", "LOCALAPPDATA", "USERPROFILE", "TEMP", "TMP", "WINDIR", "PATH"):
+            val = os.environ.get(win_var)
+            if val:
+                env[win_var] = val
+    return env
 
 
 def _validate_path(path: str) -> str:
@@ -79,14 +87,15 @@ def _find_engine(name: str) -> Optional[str]:
     if not name or name not in _ALLOWED_ENGINES or os.path.basename(name) != name:
         return None
     bin_dir = settings.ENGINE_BIN_DIR.resolve()
-    candidate = settings.ENGINE_BIN_DIR / name
-    if candidate.is_symlink():
-        return None
-    bin_path = candidate.resolve()
-    if not bin_path.is_relative_to(bin_dir):
-        return None
-    if bin_path.is_file() and os.access(str(bin_path), os.X_OK):
-        return str(bin_path)
+    candidates = [settings.ENGINE_BIN_DIR / f"{name}.exe", settings.ENGINE_BIN_DIR / name] if os.name == "nt" else [settings.ENGINE_BIN_DIR / name]
+    for candidate in candidates:
+        if candidate.is_symlink():
+            continue
+        bin_path = candidate.resolve()
+        if not bin_path.is_relative_to(bin_dir):
+            continue
+        if bin_path.is_file() and os.access(str(bin_path), os.X_OK):
+            return str(bin_path)
     return None
 
 def engine_available(name: str) -> bool:
@@ -156,7 +165,7 @@ def _run_engine(binary_path: str, args: List[str], timeout: int = 60) -> Optiona
             shell=False,
             env=_get_sandbox_env(),
             cwd=tempfile.gettempdir(),
-            close_fds=True,
+            close_fds=(os.name != "nt"),
         )
 
         stdout = result.stdout.strip()
@@ -431,7 +440,7 @@ def run_surface_graph(
                 shell=False,
                 env=_get_sandbox_env(),
                 cwd=tempfile.gettempdir(),
-                close_fds=True,
+                close_fds=(os.name != "nt"),
             )
             parsed = _extract_json_payload(res.stdout)
             

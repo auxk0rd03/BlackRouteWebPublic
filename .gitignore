@@ -34,6 +34,7 @@ disaster_recovery.patch
 # Multi-target batch & scan report outputs
 Output/Targ*
 Output/*.zip
+Output/simulated_fault_audit.json
 *.zip
 
 # Build distributions

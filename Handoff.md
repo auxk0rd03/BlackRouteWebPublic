@@ -20,6 +20,8 @@ BlackRoute-Web-Linux_VersionPopOS/
 ├── README.md                           # Operational manual, setup instructions, disclaimer
 ├── requirements.txt                    # Python library dependency definitions
 ├── blackroute_web.py                   # Master entrypoint, port scanner & server bootloader
+├── dev.sh                              # Dual-Native Linux orchestrator (CN-DIR-2026-004)
+├── dev.bat                             # Dual-Native Windows 10/11 orchestrator (CN-DIR-2026-004)
 ├── launcher.sh                         # Unified Linux CLI launcher, venv manager & compiler
 ├── launcher.bat                        # Unified Windows CLI launcher
 ├── app/
@@ -692,24 +694,29 @@ With noise filtering and deduplication active, the actual attack surface is now 
 ## 7. Maintenance & Operational Commands
 
 ```bash
-# Launch development server locally
-./launcher.sh launch
+# 1. Verify toolchain & virtual environment (Linux / Windows)
+./dev.sh setup        # Windows: dev.bat setup
 
-# Recompile Rust and Go engines into bin/
-./launcher.sh build_engines
+# 2. Recompile Rust and Go engines into bin/ (web_spider[.exe], surface_graph[.exe])
+./dev.sh build        # Windows: dev.bat build
 
-# Run all unit and integration tests via virtual environment
-./launcher.sh test
-# (or directly via .venv)
-.venv/bin/python -m unittest discover -s tests -v
+# 3. Launch development server locally (127.0.0.1)
+./dev.sh run          # Windows: dev.bat run
 
-# Run end-to-end integration test specifically
-./launcher.sh test tests/test_pipeline_e2e.py
-# (or directly via .venv)
-.venv/bin/python -m unittest tests/test_pipeline_e2e.py
+# 4. Run single-sweep CLI diagnostic & CMMC 2.0 L2 verification
+./dev.sh cli          # Windows: dev.bat cli
+
+# 5. Run fault-injection simulation & export Output/simulated_fault_audit.json
+./dev.sh simulate     # Windows: dev.bat simulate
+
+# 6. Run all Go, Rust, and Python unit/integration tests
+./dev.sh test         # Windows: dev.bat test
+
+# 7. Format Rust & Go polyglot sources
+./dev.sh fmt          # Windows: dev.bat fmt
 
 # Package single-file standalone release binary
-./launcher.sh build_release
+./dev.sh build_release
 
 # Build and run multi-stage Docker container
 docker-compose up --build -d
@@ -717,6 +724,18 @@ docker-compose up --build -d
 # Check Docker container status and logs
 docker-compose logs -f
 ```
+
+### Universal Command Parity Contract (`CN-DIR-2026-004`)
+
+| Subcommand | Linux (`./dev.sh <cmd>`) | Windows (`dev.bat <cmd>`) | Operational Function |
+| :--- | :--- | :--- | :--- |
+| **`setup`** | `./dev.sh setup` | `dev.bat setup` | Verifies `go`, `cargo`, `python3`, initializes `.venv`, and installs `requirements.txt`. |
+| **`build`** | `./dev.sh build` | `dev.bat build` | Compiles `bin/web_spider[.exe]` (Rust) and `bin/surface_graph[.exe]` (Go `GOFIPS=1`) + regenerates SBOMs. |
+| **`run` / `serve`** | `./dev.sh run` | `dev.bat run` | Launches the FastAPI/HTMX Mission Control server on `127.0.0.1` (`8000–8100`). |
+| **`cli`** | `./dev.sh cli` | `dev.bat cli` | Executes a deterministic single-sweep CLI diagnostic, engine health, and CMMC 2.0 L2 compliance audit. |
+| **`simulate`** | `./dev.sh simulate` | `dev.bat simulate` | Runs fault-injection / degraded enterprise attack-surface simulation and writes `Output/simulated_fault_audit.json`. |
+| **`test`** | `./dev.sh test` | `dev.bat test` | Executes Go (`go test`), Rust (`cargo test`), and Python (`unittest`) verification suites. |
+| **`fmt`** | `./dev.sh fmt` | `dev.bat fmt` | Formats Go (`go fmt ./...`) and Rust (`cargo fmt`) polyglot engines. |
 
 ---
 *CyberNest Labs Internal Application — Authorized Security Engineering Standard.*

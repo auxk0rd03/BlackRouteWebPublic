@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:416e62e5-47c4-55d8-9db0-7f3c7c9cc27d",
+  "serialNumber": "urn:uuid:92a113eb-6042-5eef-9cab-8d2cc72c73a5",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-29T19:00:27Z",
+    "timestamp": "2026-10-30T22:49:00Z",
     "tools": [
       {
         "vendor": "CyberNest Holdings LLC",
@@ -70,7 +70,7 @@
       "type": "application",
       "bom-ref": "pkg:cargo/web_spider@0.1.0",
       "supplier": {
-        "name": "CyberNest Holdings LLC (Auxk0rd)"
+        "name": "CyberNest Holdings LLC (CyberNest Labs Department)"
       },
       "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
       "name": "web_spider",
@@ -226,7 +226,7 @@
       "type": "application",
       "bom-ref": "pkg:golang/surface_graph@1.0.0",
       "supplier": {
-        "name": "CyberNest Holdings LLC (Auxk0rd)"
+        "name": "CyberNest Holdings LLC (CyberNest Labs Department)"
       },
       "author": "CyberNest Holdings LLC - William Ray Moore (President & Chief Architect)",
       "name": "surface_graph",
@@ -718,6 +718,6 @@
     "algorithm": "Ed25519",
     "key_id": "CN-ED25519-99AC51E14879E456",
     "public_key": "99ac51e14879e456c9747f49ff458f77e3fb3d60ec822762e6ac5ef5438f6315",
-    "signature": "9ab664169e10f0b8a0fe82d0da2b6cc2bfa69b6cc55fd5f3f3fd55f4fc4c67da4baa90070ded861b28fa50df27efd95146f96d82b96b2ff9c7809e0874a0fb0e"
+    "signature": "0c27aace3a02afb4e8516bd3daac7af6d78879ac004b6bc7db53e02b9e30e955625fa7a96d04d25f9285934699bc4b97f448cc8ce4831bf351dc8334252ae604"
   }
 }

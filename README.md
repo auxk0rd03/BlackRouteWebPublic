@@ -49,11 +49,31 @@ BlackRoute-Web-Linux_VersionPopOS/
 │       └── vids_pdf_gen.py       # CyberNest VIDS Web Security Audit PDF report generator
 ├── tests/
 │   └── test_audit.py             # Automated unit and module validation tests
-├── blackroute_web.py             # Server entrypoint and dynamic port allocation launcher
+├── blackroute_web.py             # Server entrypoint, CLI diagnostic & simulation engine
+├── dev.sh                        # Dual-Native Linux orchestrator (CN-DIR-2026-004)
+├── dev.bat                       # Dual-Native Windows 10/11 orchestrator (CN-DIR-2026-004)
 ├── launcher.sh                   # Unified Linux launcher, venv manager, engine compiler
 ├── launcher.bat                  # Unified Windows CLI launcher
 └── requirements.txt              # Python library dependencies
 ```
+
+---
+
+## Dual-Native Orchestration (`CN-DIR-2026-004` Bi-Launcher Compliance)
+
+BlackRoute-Web complies with **CyberNest Labs Architecture Specification // Standard 004 (`CN-DIR-2026-004`)**, providing full command parity across Linux (`dev.sh` / `launcher.sh`) and Windows 10/11 (`dev.bat` / `launcher.bat`), including native `.exe` compilation (`bin\web_spider.exe`, `bin\surface_graph.exe`), `GOFIPS=1` FIPS 140-3 enforcement, `CWE-377` symlink/ACL protection (`~/.cache/blackroute_web/session.log` / `%LOCALAPPDATA%\blackroute_web\session.log`), and `CWE-114` explicit PID tracking.
+
+### Universal Command Parity Contract
+
+| Subcommand | Linux (`./dev.sh <cmd>`) | Windows (`dev.bat <cmd>`) | Operational Function |
+| :--- | :--- | :--- | :--- |
+| **`setup`** | `./dev.sh setup` | `dev.bat setup` | Verifies `go`, `cargo`, `python3`, initializes `.venv`, and installs `requirements.txt`. |
+| **`build`** | `./dev.sh build` | `dev.bat build` | Compiles `bin/web_spider[.exe]` (Rust) and `bin/surface_graph[.exe]` (Go `GOFIPS=1`) + regenerates SBOMs. |
+| **`run` / `serve`** | `./dev.sh run` | `dev.bat run` | Launches the FastAPI/HTMX Mission Control server on `127.0.0.1` (`8000–8100`). |
+| **`cli`** | `./dev.sh cli` | `dev.bat cli` | Executes a deterministic single-sweep CLI diagnostic, engine health, and CMMC 2.0 L2 compliance audit. |
+| **`simulate`** | `./dev.sh simulate` | `dev.bat simulate` | Runs fault-injection / degraded enterprise attack-surface simulation and writes `Output/simulated_fault_audit.json`. |
+| **`test`** | `./dev.sh test` | `dev.bat test` | Executes Go (`go test`), Rust (`cargo test`), and Python (`unittest`) verification suites. |
+| **`fmt`** | `./dev.sh fmt` | `dev.bat fmt` | Formats Go (`go fmt ./...`) and Rust (`cargo fmt`) polyglot engines. |
 
 ---
 

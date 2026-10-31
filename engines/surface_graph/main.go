@@ -18,13 +18,13 @@ import (
 )
 
 type SurfaceResult struct {
-	TotalRoutes      int           `json:"total_routes"`
-	Nodes            []string      `json:"nodes"`
-	Edges            []Edge        `json:"edges"`
-	Technologies     []TechFinger  `json:"technologies"`
-	SensitiveRoutes  []string      `json:"sensitive_routes"`
-	ExternalDomains  []string      `json:"external_domains"`
-	RiskScore        int           `json:"risk_score"`
+	TotalRoutes     int          `json:"total_routes"`
+	Nodes           []string     `json:"nodes"`
+	Edges           []Edge       `json:"edges"`
+	Technologies    []TechFinger `json:"technologies"`
+	SensitiveRoutes []string     `json:"sensitive_routes"`
+	ExternalDomains []string     `json:"external_domains"`
+	RiskScore       int          `json:"risk_score"`
 }
 
 type Edge struct {
@@ -238,9 +238,9 @@ func isValidRoute(path string) bool {
 
 func analyzeSurface(payload InputPayload) SurfaceResult {
 	// Debug logging to verify IPC data reception
-	fmt.Fprintf(os.Stderr, "DEBUG: Received %d endpoints, %d headers, %d content bytes\n", 
+	fmt.Fprintf(os.Stderr, "DEBUG: Received %d endpoints, %d headers, %d content bytes\n",
 		len(payload.Endpoints), len(payload.Headers), len(payload.Content))
-	
+
 	// Log header keys for debugging
 	if len(payload.Headers) > 0 {
 		headerKeys := make([]string, 0, len(payload.Headers))
@@ -249,7 +249,7 @@ func analyzeSurface(payload InputPayload) SurfaceResult {
 		}
 		fmt.Fprintf(os.Stderr, "DEBUG: Header keys: %v\n", headerKeys)
 	}
-	
+
 	nodeSet := make(map[string]bool)
 	edgeSet := make(map[string]bool)
 	var edges []Edge
@@ -507,9 +507,9 @@ func fingerprintTechnologies(headers FlexibleHeaders, content string) []TechFing
 			// Cookie-based Vendor Detection
 			if kLower == "set-cookie" {
 				cookieLower := strings.ToLower(v)
-				if strings.Contains(cookieLower, "_abck") || strings.Contains(cookieLower, "bm_mi") || 
-				   strings.Contains(cookieLower, "bm_so") || strings.Contains(cookieLower, "bm_sz") ||
-				   strings.Contains(cookieLower, "akamai_session") {
+				if strings.Contains(cookieLower, "_abck") || strings.Contains(cookieLower, "bm_mi") ||
+					strings.Contains(cookieLower, "bm_so") || strings.Contains(cookieLower, "bm_sz") ||
+					strings.Contains(cookieLower, "akamai_session") {
 					addTech("Akamai Bot Manager", "Bot Protection / WAF", "Akamai Bot Manager cookies detected")
 				}
 				if strings.Contains(cookieLower, "mbox") || strings.Contains(cookieLower, "amcv") {
@@ -520,8 +520,8 @@ func fingerprintTechnologies(headers FlexibleHeaders, content string) []TechFing
 	}
 
 	// Script-based Vendor Detection
-	if strings.Contains(contentLower, "utag.sync") || strings.Contains(contentLower, "utag.js") || 
-	   strings.Contains(contentLower, "tealium") {
+	if strings.Contains(contentLower, "utag.sync") || strings.Contains(contentLower, "utag.js") ||
+		strings.Contains(contentLower, "tealium") {
 		addTech("Tealium iQ", "Tag Management", "Tealium iQ Tag Management detected")
 	}
 
