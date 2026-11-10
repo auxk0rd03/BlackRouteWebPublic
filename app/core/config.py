@@ -35,6 +35,9 @@ class Settings:
 
     DB_NAME = "blackroute_web.db"
     DB_PATH = Path(os.environ.get("BLACKROUTE_DB_PATH", str(EXEC_DIR / DB_NAME)))
+    DATA_DIR = Path(os.environ.get("BLACKROUTE_DATA_DIR", str(EXEC_DIR / "data")))
+    ARCHIVE_DB_PATH = Path(os.environ.get("BLACKROUTE_ARCHIVE_DB_PATH", str(DATA_DIR / "blackroute_archive.db")))
+    INIT_SQL_PATH = BASE_DIR / "db" / "init_db.sql"
 
     # Compiled Polyglot Engine Binaries (Rust / Go)
     ENGINE_BIN_DIR = EXEC_DIR / "bin"

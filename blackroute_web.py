@@ -21,10 +21,12 @@ from app.core.database import init_db
 from app.core.engine_bridge import engine_available, run_spider_extractor, run_surface_graph
 from app.core.security import verify_cmmc_controls, verify_host_and_origin, MAX_REQUEST_BODY_BYTES
 from app.routes import home, api
+from routes import archive_api
 
 def find_available_port(start_port: int = 8000, end_port: int = 8100) -> int:
-    """Scan and return the first available local TCP port."""
-    for port in range(start_port, end_port):
+    """Scan and return the first available local TCP port (prioritizing 127.0.0.1:8090 per CN-LABS-H2C-2026-01)."""
+    candidate_ports = [8090] + [p for p in range(start_port, end_port) if p != 8090]
+    for port in candidate_ports:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
@@ -67,9 +69,14 @@ async def cwe_hardening_middleware(request: Request, call_next):
     if not verify_host_and_origin(host, origin):
         return PlainTextResponse("CWE-346 Access Denied: Invalid Host or Origin", status_code=403)
 
-    # CWE-400: Request body capping (64KB default, 2MB for CSV batch upload)
+    # CWE-400: Request body capping (64KB default, 2MB for CSV batch upload, 50MB for Teacher JSONL import)
     path = request.url.path
-    cap = 2 * 1024 * 1024 if ("batch" in path or path == "/api/scan") else MAX_REQUEST_BODY_BYTES
+    if "import/teacher-grades" in path:
+        cap = 50 * 1024 * 1024
+    elif "batch" in path or path == "/api/scan":
+        cap = 2 * 1024 * 1024
+    else:
+        cap = MAX_REQUEST_BODY_BYTES
     cl = request.headers.get("content-length")
     if cl and int(cl) > cap:
         return PlainTextResponse("CWE-400 Payload Too Large", status_code=413)
@@ -77,6 +84,11 @@ async def cwe_hardening_middleware(request: Request, call_next):
     resp = await call_next(request)
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "font-src 'self' data:; connect-src 'self'"
+    )
     return resp
 
 # Mount static asset directory
@@ -85,6 +97,7 @@ app.mount("/static", StaticFiles(directory=resource_path("app/static")), name="s
 # Mount route controllers
 app.include_router(home.router)
 app.include_router(api.router, prefix="/api")
+app.include_router(archive_api.router)
 
 def run_cli_diagnostic() -> int:
     """Execute a deterministic single-sweep diagnostic & attack-surface audit (`--cli`)."""

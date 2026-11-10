@@ -6,6 +6,8 @@ __pycache__/
 
 # Virtual environments & configs
 .venv/
+.venv_root_old/
+.pycache_root_old/
 venv/
 ENV/
 env/
@@ -26,6 +28,8 @@ engines/web_spider/target/
 *.db-shm
 *.sqlite3
 blackroute_web.db
+data/
+reports/
 .tmp/
 *.tmp
 br_web_*

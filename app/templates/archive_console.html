@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BLACKROUTE-WEB // NEXUS-DAST LOOPBACK LAKEHOUSE</title>
+  <link rel="stylesheet" href="/static/css/blackroute-synth.css">
+  <script src="/static/js/htmx.min.js"></script>
+</head>
+<body>
+  <div class="frame-shell">
+    <div class="br-chassis">
+      <!-- Top System Identification Bar -->
+      <div class="br-topbar">
+        <span>BLACKROUTE-WEB // NEXUS-DAST DATA LAKEHOUSE &amp; MASSEXPORT CONSOLE</span>
+        <span>
+          <a href="/" style="color: var(--bg-void); text-decoration: none; margin-right: 10px;">[MISSION CONTROL]</a>
+          <a href="/ui/archive" style="color: var(--bg-void); text-decoration: none; margin-right: 10px;">[ARCHIVE &amp; MASSEXPORT]</a>
+          <a href="/ui/triage-queue" style="color: var(--bg-void); text-decoration: none; margin-right: 10px;">[ACTIVE LEARNING TRIAGE QUEUE]</a>
+          CN-DIR-2026-004 // GOFIPS=1 // [LOOPBACK: 127.0.0.1:8090]
+        </span>
+      </div>
+
+      <!-- Polled POSIX Shell Telemetry Strip (scripts/sys_telemetry.sh) -->
+      <header id="top-status-bar" class="br-telemetry-strip"
+              hx-get="/telemetry/status" hx-trigger="load, every 30s" hx-swap="innerHTML">
+        <span class="val-pos">[DB: WAL_OK // 642,810 KB]</span>
+        <span id="audit-lock-badge" class="val-pos">[AUDIT_LOCK: VERIFIED // SHA256:9F8A2C1104E2]</span>
+        <span class="val-muted">[VENDORS: ZERO_CDN // CSP: SELF]</span>
+      </header>
+
+      <!-- 6-Cell KPI Telemetry Strip (Updated in real time via hx-swap-oob="true") -->
+      <section class="br-kpi-strip" hx-get="/ui/archive/kpi-strip" hx-trigger="archiveUpdated from:body">
+        <div class="br-kpi-cell">
+          <span class="br-kpi-label">01 // TOTAL ARCHIVED</span>
+          <span id="kpi-total-archived" class="br-kpi-value">{{ stats.total_findings | default("1,428,910") }}</span>
+          <span class="br-kpi-sub">HOT TABLE: 32 FEATURES</span>
+        </div>
+        <div class="br-kpi-cell">
+          <span class="br-kpi-label">02 // VERIFIED TRUE POS</span>
+          <span id="kpi-verified-tp" class="br-kpi-value">{{ stats.verified_tp | default("4,812") }}</span>
+          <span class="br-kpi-sub">LABEL_SRC &gt;= 2</span>
+        </div>
+        <div class="br-kpi-cell">
+          <span class="br-kpi-label">03 // VERIFIED FALSE FLAGS</span>
+          <span id="kpi-verified-fp" class="br-kpi-value">{{ stats.verified_fp | default("1,109,400") }}</span>
+          <span class="br-kpi-sub">AUTO + TEACHER</span>
+        </div>
+        <div class="br-kpi-cell">
+          <span class="br-kpi-label">04 // UNLABELED QUEUE</span>
+          <span id="kpi-unlabeled-queue" class="br-kpi-value">{{ stats.unlabeled_count | default("314,698") }}</span>
+          <span class="br-kpi-sub">READY FOR BATCH</span>
+        </div>
+        <div class="br-kpi-cell">
+          <span class="br-kpi-label">05 // COLD ZSTD STORAGE</span>
+          <span id="kpi-cold-storage" class="br-kpi-value">{{ stats.cold_size_mb | default("642.8 MB") }}</span>
+          <span class="br-kpi-sub">RATIO: 6.4x (ZSTD)</span>
+        </div>
+        <div class="br-kpi-cell">
+          <span class="br-kpi-label">06 // LOCAL ONNX F2-SCORE</span>
+          <span id="kpi-onnx-f2" class="br-kpi-value">{{ stats.onnx_f2 | default("0.941") }}</span>
+          <span class="br-kpi-sub">[█████████░] ORT_CPU</span>
+        </div>
+      </section>
+
+      <!-- Server-Side Flat SVG Host Bucket Distribution Telemetry Strip -->
+      <section id="svg-telemetry-strip" class="br-telemetry-strip"
+               hx-get="/ui/archive/svg-telemetry" hx-trigger="archiveUpdated from:body">
+        {{ svg_telemetry | safe }}
+      </section>
+
+      <!-- 5-Column Filter Control Matrix -->
+      <form id="archive-filter-form"
+            class="br-control-grid"
+            hx-get="/ui/archive/preview"
+            hx-target="#archive-preview-tbody"
+            hx-trigger="change, keyup delay:200ms from:input">
+        <div class="br-field-group">
+          <label for="f-rule">RULE_ID PREFIX FILTER</label>
+          <input id="f-rule" name="rule_filter" class="br-input" type="text" placeholder="e.g. SQLI_ or XSS_DOM_" />
+        </div>
+        <div class="br-field-group">
+          <label for="f-source">PROVENANCE / LABEL_SOURCE</label>
+          <select id="f-source" name="label_source" class="br-select">
+            <option value="">[ALL SOURCES (0..4)]</option>
+            <option value="0">0 = UNLABELED</option>
+            <option value="1">1 = HEURISTIC_AUTO</option>
+            <option value="2">2 = GEMINI_TEACHER</option>
+            <option value="3">3 = HUMAN_OPERATOR</option>
+            <option value="4">4 = EXPLOIT_VERIFIED</option>
+          </select>
+        </div>
+        <div class="br-field-group">
+          <label for="f-conf">MIN TEACHER CONFIDENCE</label>
+          <input id="f-conf" name="min_teacher_conf" class="br-input" type="number" step="0.05" min="0.0" max="1.0" value="0.00" />
+        </div>
+        <div class="br-field-group">
+          <label for="f-split">GROUPED HOST SPLIT</label>
+          <select id="f-split" name="split_bucket" class="br-select">
+            <option value="all">[ALL BUCKETS (0..9)]</option>
+            <option value="train">TRAIN (BUCKETS 0..7)</option>
+            <option value="val">VAL (BUCKET 8)</option>
+            <option value="test">TEST (BUCKET 9)</option>
+          </select>
+        </div>
+        <div class="br-field-group">
+          <label for="f-scan">SCAN_ID / REPORT TARGET</label>
+          <input id="f-scan" name="scan_id" class="br-input" type="text" placeholder="ULID / UUIDv4" />
+        </div>
+      </form>
+
+      <!-- 5-Column MassExport Action Bar -->
+      <nav class="br-action-bar">
+        <a class="br-btn" href="/api/v1/archive/export/stream?fmt=parquet&amp;labeled_only=true">
+          [EXPORT PARQUET FOR OPTUNA/LIGHTGBM]
+        </a>
+        <a class="br-btn" href="/api/v1/archive/export/stream?fmt=jsonl_teacher&amp;unlabeled_only=true">
+          [EXPORT UNLABELED JSONL FOR GEMINI TEACHER]
+        </a>
+        <a class="br-btn" href="/api/v1/archive/export/sqlite-snapshot">
+          [EXPORT FULL SQLITE SNAPSHOT (.DB)]
+        </a>
+        <a class="br-btn" href="/api/v1/archive/export/sarif-stix-bundle">
+          [EXPORT SARIF 2.1.0 + STIX 2.1 BUNDLE (.ZIP)]
+        </a>
+        <a class="br-btn" href="/api/v1/archive/report/bounty-html/latest" target="_blank">
+          [GENERATE TIMES NEW ROMAN BUG REPORT (.HTML)]
+        </a>
+      </nav>
+
+      <!-- Live Tabular Preview Grid -->
+      <div class="br-table-wrap">
+        <table class="br-table">
+          <thead>
+            <tr>
+              <th style="width: 14%;">FINDING_ID</th>
+              <th style="width: 13%;">RULE_ID</th>
+              <th style="width: 6%;">CWE</th>
+              <th style="width: 7%;">SPLIT</th>
+              <th style="width: 7%;" class="num-right">HTTP</th>
+              <th style="width: 9%;" class="num-right">LEN_DELTA</th>
+              <th style="width: 9%;" class="num-right">TIME_Z</th>
+              <th style="width: 9%;" class="num-right">DOM_SIM</th>
+              <th style="width: 9%;" class="num-right">TEACH_CONF</th>
+              <th style="width: 9%;" class="num-right">STUD_PROB</th>
+              <th style="width: 8%;">VERDICT</th>
+            </tr>
+          </thead>
+          <tbody id="archive-preview-tbody">
+            {% for row in preview_rows %}
+            <tr>
+              <td><code>{{ row.finding_id }}</code></td>
+              <td>{{ row.rule_id }}</td>
+              <td>CWE-{{ row.cwe_id }}</td>
+              <td class="val-muted">[B{{ row.host_group_bucket }}]</td>
+              <td class="num-right">{{ row.http_status_code }}</td>
+              <td class="num-right val-pos">{{ "%+d"|format(row.response_length_delta) }}</td>
+              <td class="num-right">{{ "%.2f"|format(row.response_time_zscore) }}</td>
+              <td class="num-right">{{ "%.3f"|format(row.dom_structural_similarity) }}</td>
+              <td class="num-right">{{ "%.2f"|format(row.teacher_confidence or 0.0) }}</td>
+              <td class="num-right">{{ "%.2f"|format(row.student_pred_prob or 0.0) }}</td>
+              <td>
+                {% if row.ground_truth_label == 1 %}
+                  <span class="br-badge br-badge-tp">[TP:1]</span>
+                {% elif row.ground_truth_label == 0 %}
+                  <span class="br-badge br-badge-fp">[FP:0]</span>
+                {% else %}
+                  <span class="br-badge br-badge-unlabeled">[NULL]</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Embedded Active Learning Triage Queue Section -->
+      <section id="embedded-triage-section" hx-get="/ui/triage-queue?partial=1" hx-trigger="load, archiveUpdated from:body">
+      </section>
+    </div>
+  </div>
+</body>
+</html>

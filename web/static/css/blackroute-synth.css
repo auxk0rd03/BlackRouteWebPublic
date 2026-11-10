@@ -1,0 +1,263 @@
+/* web/static/css/blackroute-synth.css — CN-LABS-H2C-2026-01 Compliant Stylesheet */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/static/fonts/JetBrainsMono.woff2') format('woff2');
+  font-weight: 400 700;
+  font-display: block;
+}
+
+:root {
+  --bg-void: #000000;
+  --bg-panel: #070707;
+  --bg-focus: #160000;
+  --border-muted: #3D0000;
+  --border-primary: #CC0000;
+  --accent-signal: #FF3333;
+  --text-primary: #CCCCCC;
+  --text-bright: #FFFFFF;
+  --text-muted: #777777;
+  --status-warn: #FF6600;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Courier New', monospace;
+}
+
+/* Optional SYS.01 Nocturnal Synth-Ledger Palette Override */
+body[data-theme="sys01"] {
+  --bg-void: #080C12;
+  --bg-panel: #101420;
+  --bg-focus: #261B38;
+  --border-muted: #1E2436;
+  --border-primary: #523B78;
+  --accent-signal: #36A19D;
+  --text-primary: #DCD5C6;
+  --text-bright: #ECE7DA;
+  --text-muted: #687888;
+  --status-warn: #C9A654;
+}
+
+* {
+  box-sizing: border-box;
+  border-radius: 0px !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  background-image: none !important;
+  transition: none !important;
+}
+
+body {
+  margin: 0;
+  padding: 14px;
+  background-color: var(--bg-void);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
+/* SYS.01 Exposed OVA Wireframe Overhang Chassis */
+.frame-shell {
+  max-width: 1640px;
+  margin: 0 auto;
+  border-right: 1px solid var(--accent-signal);
+  border-bottom: 1px solid var(--accent-signal);
+  padding-right: 12px;
+  padding-bottom: 12px;
+}
+
+.br-chassis {
+  border: 1px solid var(--border-primary);
+  background-color: var(--bg-void);
+}
+
+/* Top POSIX Telemetry & System Identification Bar */
+.br-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--border-primary);
+  color: var(--bg-void);
+  font-weight: 700;
+  padding: 4px 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.br-telemetry-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--border-primary);
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+/* 6-Column Exposed Hairline KPI Telemetry Strip */
+.br-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.br-kpi-cell {
+  padding: 8px 10px;
+  border-right: 1px solid var(--border-muted);
+  background-color: var(--bg-panel);
+}
+
+.br-kpi-cell:last-child { border-right: none; }
+
+.br-kpi-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: block;
+}
+
+.br-kpi-value {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-top: 2px;
+  display: block;
+}
+
+.br-kpi-sub {
+  font-size: 10px;
+  color: var(--accent-signal);
+}
+
+/* 5-Column Filter Control Matrix */
+.br-control-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border-bottom: 1px solid var(--border-primary);
+  background-color: var(--bg-void);
+}
+
+.br-field-group {
+  padding: 6px 10px;
+  border-right: 1px solid var(--border-muted);
+  display: flex;
+  flex-direction: column;
+}
+
+.br-field-group:last-child { border-right: none; }
+
+.br-field-group label {
+  font-size: 10px;
+  color: var(--accent-signal);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+.br-input, .br-select {
+  background-color: var(--bg-void);
+  color: var(--text-bright);
+  border: 1px solid var(--border-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px 6px;
+  width: 100%;
+  outline: none;
+}
+
+.br-input:focus, .br-select:focus {
+  background-color: var(--bg-focus);
+  border-color: var(--accent-signal);
+}
+
+/* 5-Column MassExport Action Matrix (0ms Binary Inversion) */
+.br-action-bar {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.br-btn {
+  background-color: var(--bg-void);
+  color: var(--accent-signal);
+  border: none;
+  border-right: 1px solid var(--border-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 8px 10px;
+  text-align: center;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-block;
+}
+
+.br-btn:last-child { border-right: none; }
+
+.br-btn:hover, .br-btn:focus-visible {
+  background-color: var(--border-primary);
+  color: var(--bg-void);
+  outline: none;
+}
+
+.br-btn-inline {
+  border: 1px solid var(--border-primary);
+  padding: 2px 6px;
+  font-size: 10px;
+  margin-right: 4px;
+}
+
+/* Orthogonal Data Table Grid */
+.br-table-wrap { width: 100%; overflow-x: auto; }
+
+.br-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.br-table th {
+  background-color: var(--bg-focus);
+  color: var(--accent-signal);
+  border-bottom: 1px solid var(--border-primary);
+  border-right: 1px solid var(--border-muted);
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.br-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-muted);
+  border-right: 1px solid var(--border-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.br-table tbody tr:hover td {
+  background-color: var(--bg-focus);
+  color: var(--text-bright);
+}
+
+.num-right { text-align: right !important; }
+.val-pos { color: var(--accent-signal); }
+.val-warn { color: var(--status-warn); }
+.val-muted { color: var(--text-muted); }
+
+/* Blocky Status Badges */
+.br-badge {
+  display: inline-block;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid var(--border-primary);
+  text-transform: uppercase;
+}
+
+.br-badge-tp { background-color: var(--border-primary); color: var(--bg-void); }
+.br-badge-fp { background-color: var(--bg-void); color: var(--text-muted); border-color: var(--text-muted); }
+.br-badge-unlabeled { background-color: var(--bg-focus); color: var(--accent-signal); }

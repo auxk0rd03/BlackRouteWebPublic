@@ -738,4 +738,53 @@ docker-compose logs -f
 | **`fmt`** | `./dev.sh fmt` | `dev.bat fmt` | Formats Go (`go fmt ./...`) and Rust (`cargo fmt`) polyglot engines. |
 
 ---
+
+## 8. Enterprise ML Archival, 32-Feature Engineering, Active Learning & MassExport Lakehouse (`CN-LABS-BRW-2026-02`)
+
+**Objective**: Upgrade BlackRoute-Web from a transient single-scan reporting interface into an air-gapped, enterprise **Vulnerability Data Lakehouse & Active Learning Engine** (`CN-LABS-BRW-2026-02` / `CN-LABS-H2C-2026-01`) without breaking any existing DAST workflows.
+
+### 8.1 Phase 1: Dual-Path SQLite3 WAL Lakehouse Architecture (`db/init_db.sql`, `app/core/database.py`, `scripts/migrate_v2_archive.py`)
+- **Engine Tuning Pragmas**: Every connection applies `PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA mmap_size = 268435456; PRAGMA cache_size = -64000; PRAGMA foreign_keys = ON;` to eliminate `SQLITE_BUSY` contention during concurrent scan ingestion.
+- **Four-Table Lakehouse Schema**:
+  1. `scan_sessions`: Tracks `scan_id`, `target_root_url`, `target_host_hash` (`SHA-256(normalized_host)`), `scan_profile`, `scanner_version`, `baseline_latency_mean_ms`, `baseline_latency_std_ms`, `baseline_404_length`, `baseline_404_simhash` (64-bit DOM Tag SimHash), `detected_waf_vendor`, and `raw_sarif_path`.
+  2. `findings_ml_hot`: Fixed-width 32+ feature hot table containing deduplication hashes (`exact_dedup_hash`, `fuzzy_behavior_hash`), `host_group_bucket` (`0..9` for GroupKFold target-leakage isolation), categorical rule/endpoint encodings (`rule_id`, `cwe_id`, `severity_scanner`, `http_method_id`, `injection_point_id`, `endpoint_depth`, `is_authenticated_ctx`), differential response telemetry (`http_status_code`, `baseline_status_code`, `status_code_changed`, `response_length_bytes`, `response_length_delta`, `response_length_ratio`, `word_count_delta`, `line_count_delta`, `dom_structural_similarity`, `soft_404_similarity`), timing Z-scores (`response_time_ms`, `response_time_delta_ms`, `response_time_zscore`), Shannon entropy deltas (`body_shannon_entropy`, `entropy_delta`, `content_type_id`, `content_type_mismatch`), reflection context analysis (`payload_length`, `payload_entropy`, `reflection_count`, `reflection_context_id`, `special_chars_preserved_ratio`), heuristic bitmask flags (`has_sql_error_sig`, `has_stack_trace_sig`, `has_os_cmd_sig`, `has_ssrf_cloud_sig`, `has_waf_block_sig`, `redirected_to_login`), and active learning labels (`ground_truth_label`, `label_source`, `teacher_confidence`, `student_pred_prob`, `disagreement_score`, `needs_human_review`).
+  3. `findings_evidence_cold`: Cold compressed evidence table storing `zstd`-compressed raw HTTP request/response exchanges (`zstd_Http_exchange`, `request_raw_zstd`, `response_raw_zstd`), PII/IP/cookie-scrubbed 1.5KB snippets (`sanitized_snippet_teacher`), `stealth_curl_command`, `teacher_reasoning`, and cached STIX 2.1 objects (`stix_bundle_json`).
+  4. `findings_vec_index`: Stores 384-dimensional `float32` response embeddings (`1536` bytes per finding) for novelty detection.
+- **Automatic Dual-DB Archival**: `save_scan_record()` in `app/core/database.py` automatically extracts and persists all 32+ features and cold evidence into both `blackroute_web.db` and `data/blackroute_archive.db` on every single-target or batch scan while preserving all legacy tables (`scans`, `findings`, `endpoints`).
+
+### 8.2 Phase 2: 32-Feature Differential Extractor & Async Write-Behind Archiver (`services/feature_extractor.py`, `engines/web_spider/src/main.rs`)
+- **`BaselineProfiler`**: Sends 3 benign requests (root path + 2 random non-existent paths `/br_check_<hex>`) or derives static baseline telemetry to compute `baseline_latency_mean_ms`, `baseline_latency_std_ms`, `baseline_404_length`, 64-bit DOM Tag SimHash (`compute_dom_tag_simhash()`), and WAF vendor detection (`CLOUDFLARE`, `AKAMAI`, `AWS_WAF`, `IMPERVA`, `NONE`).
+- **`ReflectionAnalyzer`**: State-machine context parser inspecting the surrounding 64 bytes of reflected payloads to classify `reflection_context_id` (`0=None`, `1=HTML_Body`, `2=HTML_Attr_Quoted`, `3=HTML_Attr_Unquoted`, `4=Script_Tag`, `5=Comment`, `6=JSON_Val`, `7=Header`) and `special_chars_preserved_ratio` across `('<', '>', '"', "'", '(', ')', ';', '$', '`')`.
+- **`SignatureMatcher` & Rust `RegexSet` Engine**: Pre-compiled regex signature bank in Python (`SignatureMatcher.match_all()`) and Thompson NFA `RegexSet` in Rust (`match_heuristic_signatures()` in `engines/web_spider/src/main.rs`) evaluating the 5 deterministic bitmask flags plus login redirect detection and inline student false-flag probability scoring.
+- **`StealthCurlBuilder`**: Synthesizes bug-bounty reproduction `curl` commands with randomized User-Agent rotation, L7 Client Hints, `--compressed`, `--path-as-is`, `--insecure`, and `--retry 2 --retry-delay 1`.
+- **`AsyncSQLiteArchiver`**: Thread-safe ring buffer flushing findings in batches of 250 every 1.0 second via `executemany()` inside a single `BEGIN IMMEDIATE` transaction.
+
+### 8.3 Phase 3: Zero-OOM Streaming MassExport & Teacher Batch Ingestion (`routes/archive_api.py`, `routes/export.py`)
+- **`GET /api/v1/archive/export/stream`**: Zero-OOM generator streaming `jsonl_ml`, `jsonl_teacher`, `csv_flat`, `parquet`, `sqlite_snapshot`, `sarif_bundle`, `stix_taxii`, and `bounty_html` via `cur.fetchmany(1000)` with `?split_mode=grouped_host` (`host_group_bucket 0..7 -> train`, `8 -> val`, `9 -> test`). Verified to stream 100,000 rows with `< 35 MB` RSS growth.
+- **`GET /api/v1/archive/export/sqlite-snapshot`**: Atomic `VACUUM INTO` hot snapshot download with `X-Archive-SHA256` verification header.
+- **`GET /api/v1/archive/export/sarif-stix-bundle`**: Streaming `.zip` bundle containing OASIS SARIF v2.1.0 (`.sarif` with `stealth_curl_command` in `properties`), STIX 2.1 (`vulnerability` and `observed-data` objects), and TAXII 2.1 JSON envelopes.
+- **`POST /api/v1/archive/import/teacher-grades`**: Ingests Gemini Teacher Batch JSONL verdicts (`is_true_positive`, `teacher_confidence`, `reasoning`), auto-committing `>= 0.85` to `label_source = 2`, queueing `< 0.85` or high-disagreement findings (`needs_human_review = 1`), and protecting human operator labels (`label_source >= 3`).
+- **`GET /api/v1/archive/report/bounty-html/{scan_id}`**: Generates a standalone print-ready HTML vulnerability assessment report strictly styled in **Times New Roman** serif typography (`#000000` on `#FFFFFF`, `0px` border radius).
+
+### 8.4 Phase 4 & 5: `CN-LABS-H2C-2026-01` Loopback Sovereignty, `SYS.01` Crimson-Ledger WebGUI & POSIX Telemetry (`web/`, `app/templates/`, `scripts/`)
+- **Strict Loopback & Zero-CDN Compliance**: Prioritizes `127.0.0.1:8090`, enforces `Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'`, and vendors `htmx.min.js`, `JetBrainsMono.woff2`, and `blackroute-synth.css` locally under `app/static/` and `web/static/`.
+- **HTMX Views & Out-of-Band (`hx-swap-oob="true"`) Contract**:
+  - `GET /ui/archive`: Renders the Lakehouse & MassExport Console with the 30s polled POSIX telemetry bar (`#top-status-bar`), 6-cell KPI strip (`#kpi-total-archived`, `#kpi-verified-tp`, `#kpi-verified-fp`, `#kpi-unlabeled-queue`, `#kpi-cold-storage`, `#kpi-onnx-f2`), server-side flat `<svg>` host split distribution bar, 5-column filter matrix, 5-column MassExport bar, and live tabular preview.
+  - `GET /ui/triage-queue` & `POST /api/v1/archive/label/{finding_id}?val={1|0}`: Active Learning Triage Workbench that commits operator ground truth (`label_source = 3`), runs `scripts/backup_and_sign.sh` (`VACUUM INTO` + SHA-256 lock), removes the triaged row, and piggybacks `hx-swap-oob="true"` updates for KPI counters and `#audit-lock-badge` alongside `HX-Trigger: archiveUpdated, triageVerdictCommitted`.
+- **Operational Lakehouse Commands**:
+  ```bash
+  # Initialize v2 WAL lakehouse schema & migrate legacy scans
+  .venv/bin/python scripts/migrate_v2_archive.py
+
+  # Backfill historical SARIF/JSON reports into dual-path SQLite tables
+  .venv/bin/python scripts/backfill_sarif_dir.py --input ./reports/sarif/
+
+  # Execute atomic SQLite hot-backup & emit HTMX OOB SHA-256 state lock badge
+  ./scripts/backup_and_sign.sh data/blackroute_archive.db data/backups
+
+  # Emit live POSIX WAL & loopback status bar fragment
+  ./scripts/sys_telemetry.sh data/blackroute_archive.db
+  ```
+
+---
 *CyberNest Labs Internal Application — Authorized Security Engineering Standard.*

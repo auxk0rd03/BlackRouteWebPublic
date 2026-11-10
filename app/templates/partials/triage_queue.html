@@ -1,0 +1,61 @@
+<div class="br-chassis">
+  <div class="br-topbar">
+    <span>ACTIVE LEARNING TRIAGE QUEUE // HIGH-DISAGREEMENT SPOT-CHECK (CONF &lt; 0.85 OR |TEACHER - STUDENT| &gt; 0.40)</span>
+    <span>HOTKEYS: [1]=CONFIRM TP  [0]=FLAG FP  [SPACE]=EXPAND ZSTD EVIDENCE</span>
+  </div>
+
+  <div class="br-table-wrap">
+    <table class="br-table">
+      <thead>
+        <tr>
+          <th style="width: 12%;">FINDING_ID</th>
+          <th style="width: 12%;">RULE_ID</th>
+          <th style="width: 18%;">PARAMETER &amp; SIGNATURES</th>
+          <th style="width: 8%;" class="num-right">TEACHER</th>
+          <th style="width: 8%;" class="num-right">STUDENT</th>
+          <th style="width: 12%;" class="num-right">DISAGREEMENT</th>
+          <th style="width: 30%;">OPERATOR VERDICT ACTION (LABEL_SOURCE=3)</th>
+        </tr>
+      </thead>
+      <tbody id="triage-queue-tbody">
+        {% for item in triage_rows %}
+        <tr id="triage-row-{{ item.finding_id }}">
+          <td><code>{{ item.finding_id }}</code></td>
+          <td><strong>{{ item.rule_id }}</strong></td>
+          <td>
+            <code>{{ item.vulnerable_parameter }}</code>
+            {% if item.has_sql_error_sig %}<span class="br-badge br-badge-tp">SQL_SIG</span>{% endif %}
+            {% if item.has_waf_block_sig %}<span class="br-badge br-badge-fp">WAF_SIG</span>{% endif %}
+          </td>
+          <td class="num-right">{{ "%.2f"|format(item.teacher_confidence or 0.0) }}</td>
+          <td class="num-right">{{ "%.2f"|format(item.student_pred_prob or 0.0) }}</td>
+          <td class="num-right val-warn" style="font-weight: 700;">
+            {{ "%.3f"|format(item.disagreement_score) }}
+          </td>
+          <td>
+            <button class="br-btn br-btn-inline"
+                    hx-post="/api/v1/archive/label/{{ item.finding_id }}?val=1"
+                    hx-target="#triage-row-{{ item.finding_id }}"
+                    hx-swap="outerHTML">
+              [CONFIRM TRUE POSITIVE (1)]
+            </button>
+            <button class="br-btn br-btn-inline"
+                    hx-post="/api/v1/archive/label/{{ item.finding_id }}?val=0"
+                    hx-target="#triage-row-{{ item.finding_id }}"
+                    hx-swap="outerHTML">
+              [FLAG FALSE POSITIVE (0)]
+            </button>
+            <button class="br-btn br-btn-inline"
+                    hx-get="/ui/triage-queue/evidence/{{ item.finding_id }}"
+                    hx-target="#evidence-drawer-{{ item.finding_id }}"
+                    hx-swap="innerHTML">
+              [+EVIDENCE]
+            </button>
+          </td>
+        </tr>
+        <tr id="evidence-drawer-{{ item.finding_id }}"></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

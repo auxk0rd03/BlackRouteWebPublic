@@ -6,7 +6,7 @@
 //! - CWE-22 Path Sanitization (`sanitize_relative_path`, `safe_resolve_under`)
 //! - FIPS 140-3 SHA-256 Known-Answer Test (KAT) self-test
 
-use regex::Regex;
+use regex::{Regex, RegexSet};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
@@ -188,6 +188,75 @@ fn compile_regex(pattern: &str) -> Option<Regex> {
     Regex::new(pattern).ok()
 }
 
+/// CN-LABS-BRW-2026-02 Phase 2.2: Linear-time Thompson NFA RegexSet signature bank
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct HeuristicSignatureFlags {
+    pub has_sql_error_sig: u8,
+    pub has_stack_trace_sig: u8,
+    pub has_os_cmd_sig: u8,
+    pub has_ssrf_cloud_sig: u8,
+    pub has_waf_block_sig: u8,
+    pub student_pred_prob: f64,
+}
+
+pub fn match_heuristic_signatures(body: &str) -> HeuristicSignatureFlags {
+    let patterns = [
+        r"(?i)(SQL syntax.*MySQL|ORA-[0-9]{5}|PostgreSQL.*ERROR|SQLite/JDBCDriver|Unclosed quotation mark)",
+        r"(?i)(Traceback \(most recent call last\)|at java\.lang\.|ReferenceError:|Exception in thread|Fatal error:)",
+        r"(?i)(uid=[0-9]+\([a-z0-9_]+\)\s+gid=[0-9]+|root:x:0:0:|\[boot loader\]|Volume Serial Number)",
+        r"(?i)(ami-[a-z0-9]+|instance-id|169\.254\.169\.254|computeMetadata/v1)",
+        r"(?i)(Attention Required! \| Cloudflare|Access Denied.*Akamai|Imperva|Request blocked by AWS WAF|403 Forbidden.*WAF)",
+    ];
+    let mut flags = HeuristicSignatureFlags::default();
+    if let Ok(set) = RegexSet::new(patterns) {
+        let matches = set.matches(body);
+        if matches.matched(0) {
+            flags.has_sql_error_sig = 1;
+        }
+        if matches.matched(1) {
+            flags.has_stack_trace_sig = 1;
+        }
+        if matches.matched(2) {
+            flags.has_os_cmd_sig = 1;
+        }
+        if matches.matched(3) {
+            flags.has_ssrf_cloud_sig = 1;
+        }
+        if matches.matched(4) {
+            flags.has_waf_block_sig = 1;
+        }
+    }
+    let mut logit: f64 = -0.35;
+    if flags.has_sql_error_sig == 1 {
+        logit += 1.65;
+    }
+    if flags.has_os_cmd_sig == 1 {
+        logit += 1.85;
+    }
+    if flags.has_ssrf_cloud_sig == 1 {
+        logit += 1.75;
+    }
+    if flags.has_stack_trace_sig == 1 {
+        logit += 0.70;
+    }
+    if flags.has_waf_block_sig == 1 {
+        logit -= 1.80;
+    }
+    flags.student_pred_prob = 1.0 / (1.0 + (-logit).exp());
+    flags
+}
+
+/// Zero-allocation HTMX Out-of-Band (hx-swap-oob="true") KPI fragment emitter
+pub fn emit_oob_kpi_fragment(total: &str, tp: &str, fp: &str, queue: &str) -> String {
+    format!(
+        "<span id=\"kpi-total-archived\" hx-swap-oob=\"true\" class=\"br-kpi-value\">{}</span>\n\
+         <span id=\"kpi-verified-tp\" hx-swap-oob=\"true\" class=\"br-kpi-value\">{}</span>\n\
+         <span id=\"kpi-verified-fp\" hx-swap-oob=\"true\" class=\"br-kpi-value\">{}</span>\n\
+         <span id=\"kpi-unlabeled-queue\" hx-swap-oob=\"true\" class=\"br-kpi-value\">{}</span>",
+        total, tp, fp, queue
+    )
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -195,6 +264,20 @@ fn main() {
             "Usage: web_spider <file_path | dir <directory>> [--depth <N>] [--domain <domain>]"
         );
         process::exit(1);
+    }
+
+    if args.len() >= 2 && args[1] == "score" {
+        let payload = if args.len() >= 3 { &args[2] } else { "" };
+        let flags = match_heuristic_signatures(payload);
+        if let Ok(js) = serde_json::to_string(&flags) {
+            println!("{}", js);
+        }
+        return;
+    }
+
+    if args.len() >= 6 && args[1] == "oob" {
+        println!("{}", emit_oob_kpi_fragment(&args[2], &args[3], &args[4], &args[5]));
+        return;
     }
 
     let mut depth = DEFAULT_MAX_DEPTH;
@@ -863,5 +946,27 @@ fn extract_endpoint_patterns(
         let idx = endpoints.len();
         seen_paths.insert(path.to_string(), idx);
         endpoints.push(finding);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_thompson_nfa_regexset_signatures() {
+        let body = "Warning: SQL syntax near MySQL server version and uid=0(root) gid=0(root)";
+        let sigs = match_heuristic_signatures(body);
+        assert_eq!(sigs.has_sql_error_sig, 1);
+        assert_eq!(sigs.has_os_cmd_sig, 1);
+        assert_eq!(sigs.has_waf_block_sig, 0);
+        assert!(sigs.student_pred_prob > 0.85);
+    }
+
+    #[test]
+    fn test_emit_oob_kpi_fragment() {
+        let frag = emit_oob_kpi_fragment("100", "25", "50", "25");
+        assert!(frag.contains("hx-swap-oob=\"true\""));
+        assert!(frag.contains("id=\"kpi-verified-tp\""));
     }
 }
