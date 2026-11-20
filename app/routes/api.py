@@ -482,6 +482,48 @@ async def export_taxii():
         headers={"Content-Disposition": "attachment; filename=blackroute_web_taxii_collection.json"}
     )
 
+def _report_data_from_scan(
+    scan: Dict[str, Any],
+    findings: List[Dict[str, Any]],
+    endpoints: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Build unified report_data dictionary from persisted SQLite scan telemetry."""
+    from app.core.engine_bridge import _is_sensitive_route, _python_fallback_surface_graph
+
+    if not scan.get("risk_score"):
+        risk_score = _python_fallback_surface_graph(
+            [e["url"] for e in endpoints if e.get("url")],
+            {},
+            "",
+            findings=findings,
+        ).get("risk_score", 15)
+    else:
+        risk_score = int(scan["risk_score"])
+
+    sensitive_routes = scan.get("sensitive_routes")
+    if not sensitive_routes:
+        sensitive_routes = [
+            e["url"] for e in endpoints
+            if e.get("url") and _is_sensitive_route(e["url"])
+        ]
+
+    return {
+        "target_url": scan.get("target_url", ""),
+        "scan_completed": scan.get("scan_completed") or scan.get("timestamp", ""),
+        "scan_profile": scan.get("scan_profile", ""),
+        "initial_http_status": scan.get("initial_http_status", 0),
+        "scan_duration": scan.get("scan_duration", 0.0),
+        "engine_mode": scan.get("engine_mode", ""),
+        "crawl_notes": scan.get("crawl_notes", ""),
+        "pages_crawled": scan.get("pages_crawled", 0),
+        "endpoints_found": scan.get("endpoints_found", 0),
+        "findings": findings,
+        "technologies": scan.get("technologies") or [],
+        "sensitive_routes": sensitive_routes,
+        "risk_score": risk_score,
+    }
+
+
 @router.post("/scans/{scan_id}/report")
 @router.get("/scans/{scan_id}/report")
 async def generate_report_for_scan(scan_id: int):
@@ -493,29 +535,7 @@ async def generate_report_for_scan(scan_id: int):
     if not scan:
         return JSONResponse(status_code=404, content={"error": f"Scan ID {scan_id} not found."})
 
-    if not scan.get("risk_score"):
-        from app.core.engine_bridge import _python_fallback_surface_graph
-        risk_score = _python_fallback_surface_graph(
-            [e["url"] for e in endpoints if e.get("url")],
-            {},
-            "",
-            findings=findings,
-        ).get("risk_score", 15)
-    else:
-        risk_score = int(scan["risk_score"])
-
-    sensitive_routes = [e["url"] for e in endpoints if any(s in e["url"] for s in ["/admin", "/api", "/auth", "/login", "/config"])]
-
-    report_data = {
-        "target_url": scan["target_url"],
-        "scan_completed": scan.get("timestamp", ""),
-        "pages_crawled": scan["pages_crawled"],
-        "endpoints_found": scan["endpoints_found"],
-        "findings": findings,
-        "technologies": [],
-        "sensitive_routes": sensitive_routes,
-        "risk_score": risk_score
-    }
+    report_data = _report_data_from_scan(scan, findings, endpoints)
 
     loop = asyncio.get_running_loop()
     report_file = await loop.run_in_executor(
@@ -990,20 +1010,7 @@ async def export_batch_zip():
         # Fallback: if a single scan was completed in SQLite, materialize Output/Targ001 on-demand
         scan, findings, endpoints = get_latest_scan_findings()
         if scan:
-            sensitive_routes = [
-                e["url"] for e in endpoints
-                if any(s in e.get("url", "") for s in ["/admin", "/api", "/auth", "/login", "/config"])
-            ]
-            report_data = {
-                "target_url": scan.get("target_url", ""),
-                "scan_completed": scan.get("timestamp", ""),
-                "pages_crawled": scan.get("pages_crawled", 0),
-                "endpoints_found": scan.get("endpoints_found", 0),
-                "findings": findings,
-                "technologies": [],
-                "sensitive_routes": sensitive_routes,
-                "risk_score": scan.get("risk_score", 15)
-            }
+            report_data = _report_data_from_scan(scan, findings, endpoints)
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(
                 None,

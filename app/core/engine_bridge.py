@@ -475,6 +475,42 @@ def _is_vendor_endpoint(ep: str) -> bool:
     )
     return any(ind in ep_lower for ind in vendor_indicators)
 
+_EDITORIAL_IGNORED_DIRS = (
+    "/news/", "/media/", "/blog/", "/press/", "/articles/",
+    "/events/", "/stories/", "/publications/",
+)
+
+_IGNORED_STATIC_SUFFIXES = (
+    ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg",
+    ".css", ".ico", ".woff", ".woff2",
+)
+
+_SENSITIVE_STRUCTURAL_MARKERS = (
+    "api-docs", "/.git", "/.env", "/graphql", "/swagger", "/openapi", "/actuator",
+)
+
+_SENSITIVE_ROUTE_TOKENS = frozenset({
+    "admin", "login", "signin", "auth", "oauth", "token", "secret", "config",
+    "actuator", "metrics", "upload", "debug", "internal", "graphql", "swagger",
+    "openapi", "backup", "dump",
+})
+
+
+def _is_sensitive_route(path: str) -> bool:
+    """Return True when path matches a genuine sensitive route token (ignoring vendor, editorial, and static assets)."""
+    if not path or _is_vendor_endpoint(path):
+        return False
+    path_lower = path.lower()
+    if any(ignored in path_lower for ignored in _EDITORIAL_IGNORED_DIRS):
+        return False
+    if path_lower.endswith(_IGNORED_STATIC_SUFFIXES):
+        return False
+    if any(marker in path_lower for marker in _SENSITIVE_STRUCTURAL_MARKERS):
+        return True
+    tokens = [t for t in re.split(r"[/\-_.]", path_lower) if t]
+    return any(tok in _SENSITIVE_ROUTE_TOKENS for tok in tokens)
+
+
 def _python_fallback_surface_graph(
     endpoints: List[str],
     headers: Dict[str, Any],
@@ -486,7 +522,6 @@ def _python_fallback_surface_graph(
     edges = []
     sensitive_routes = []
     ext_domains = set()
-    sensitive_keywords = ["admin", "login", "auth", "oauth", "token", "secret", "config", "actuator", "metrics", "upload", "graphql", "swagger"]
 
     for ep in endpoints:
         ep = ep.strip()
@@ -506,10 +541,8 @@ def _python_fallback_surface_graph(
             continue
 
         nodes.add(path)
-        # Exclude third-party vendor script paths from first-party sensitive routes
-        if not _is_vendor_endpoint(path):
-            if any(kw in path.lower() for kw in sensitive_keywords):
-                sensitive_routes.append(path)
+        if _is_sensitive_route(path):
+            sensitive_routes.append(path)
 
     techs = []
     c_lower = content.lower()

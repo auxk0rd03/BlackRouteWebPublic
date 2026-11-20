@@ -208,6 +208,18 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
         cursor.execute("ALTER TABLE scans ADD COLUMN risk_score INTEGER DEFAULT 0")
     if "encrypted_seal" not in scan_columns:
         cursor.execute("ALTER TABLE scans ADD COLUMN encrypted_seal TEXT")
+    for col_name, col_def in (
+        ("scan_completed", "TEXT"),
+        ("scan_profile", "TEXT"),
+        ("initial_http_status", "INTEGER DEFAULT 0"),
+        ("scan_duration", "REAL DEFAULT 0.0"),
+        ("engine_mode", "TEXT"),
+        ("crawl_notes", "TEXT"),
+        ("sensitive_routes_json", "TEXT"),
+        ("technologies_json", "TEXT"),
+    ):
+        if col_name not in scan_columns:
+            cursor.execute(f"ALTER TABLE scans ADD COLUMN {col_name} {col_def}")
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS endpoints (
@@ -299,6 +311,14 @@ def save_scan_record(
     status: str = "completed",
     risk_score: int = 0,
     baseline_meta: Optional[Dict[str, Any]] = None,
+    scan_completed: str = "",
+    scan_profile: str = "",
+    initial_http_status: int = 0,
+    scan_duration: float = 0.0,
+    engine_mode: str = "",
+    crawl_notes: str = "",
+    sensitive_routes: Optional[List[str]] = None,
+    technologies: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """Persist scan results, findings, and discovered endpoints into SQLite + Dual-Path Lakehouse."""
     init_db()
@@ -308,16 +328,41 @@ def save_scan_record(
     endpoints = endpoints or []
     endpoints_found = len(endpoints)
     findings_count = len(findings)
+    effective_completed = scan_completed or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sensitive_json = json.dumps(sensitive_routes or [])
+    techs_json = json.dumps(technologies or [])
 
     seal_payload = json.dumps({"target_url": target_url, "findings_count": findings_count, "risk_score": risk_score}).encode("utf-8")
     encrypted_seal = encrypt_aes256_gcm(seal_payload)
 
     cursor.execute(
         """
-        INSERT INTO scans (target_url, status, pages_crawled, endpoints_found, findings_count, report_file, risk_score, encrypted_seal)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO scans (
+            target_url, status, pages_crawled, endpoints_found, findings_count,
+            report_file, risk_score, encrypted_seal, scan_completed, scan_profile,
+            initial_http_status, scan_duration, engine_mode, crawl_notes,
+            sensitive_routes_json, technologies_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (target_url, status, pages_crawled, endpoints_found, findings_count, report_file, risk_score, encrypted_seal)
+        (
+            target_url,
+            status,
+            pages_crawled,
+            endpoints_found,
+            findings_count,
+            report_file,
+            risk_score,
+            encrypted_seal,
+            effective_completed,
+            scan_profile,
+            int(initial_http_status or 0),
+            float(scan_duration or 0.0),
+            engine_mode,
+            crawl_notes,
+            sensitive_json,
+            techs_json,
+        )
     )
     scan_id = cursor.lastrowid
 
@@ -395,6 +440,27 @@ def save_scan_record(
     return scan_id
 
 
+def _hydrate_scan_row(scan_row: sqlite3.Row) -> Dict[str, Any]:
+    """Convert a SQLite scans row to a dictionary and deserialize stored telemetry JSON fields."""
+    scan = dict(scan_row)
+    if not scan.get("scan_completed"):
+        scan["scan_completed"] = scan.get("timestamp", "")
+    for json_col, target_key in (
+        ("sensitive_routes_json", "sensitive_routes"),
+        ("technologies_json", "technologies"),
+    ):
+        raw_val = scan.get(json_col)
+        if raw_val:
+            try:
+                parsed = json.loads(raw_val)
+                scan[target_key] = parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                scan[target_key] = []
+        else:
+            scan[target_key] = []
+    return scan
+
+
 def get_latest_scan_findings() -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Retrieve the most recent scan record, its findings, and endpoints."""
     conn = get_db_connection()
@@ -405,7 +471,7 @@ def get_latest_scan_findings() -> Tuple[Optional[Dict[str, Any]], List[Dict[str,
         conn.close()
         return None, [], []
 
-    scan = dict(scan_row)
+    scan = _hydrate_scan_row(scan_row)
     cursor.execute("SELECT * FROM findings WHERE scan_id = ? ORDER BY id ASC", (scan["id"],))
     findings = [dict(row) for row in cursor.fetchall()]
 
@@ -426,7 +492,7 @@ def get_scan_by_id(scan_id: int) -> Tuple[Optional[Dict[str, Any]], List[Dict[st
         conn.close()
         return None, [], []
 
-    scan = dict(scan_row)
+    scan = _hydrate_scan_row(scan_row)
     cursor.execute("SELECT * FROM findings WHERE scan_id = ? ORDER BY id ASC", (scan["id"],))
     findings = [dict(row) for row in cursor.fetchall()]
 

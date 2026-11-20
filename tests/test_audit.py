@@ -1426,6 +1426,145 @@ class TestBlackRouteWebAudit(unittest.TestCase):
             )
             self.assertTrue(os.path.exists(os.path.join(tmp_pdf_dir, pdf_name)))
 
+    def test_pdf_no_dropped_findings_telemetry_parity_utf8_spider_hsts_and_sensitive_routes(self):
+        """Regression checks: 0 dropped PDF findings across page breaks, MD/PDF/SQLite telemetry parity, UTF-8 Rust spider, HSTS Medium 4.2, and sensitive route filtering."""
+        import shutil
+        import subprocess
+        import tempfile
+        from fastapi.testclient import TestClient
+        from blackroute_web import app
+        from app.core.database import save_scan_record, get_scan_by_id
+        from Sources.Utilities.vids_pdf_gen import (
+            classify_bug_bounty_metadata,
+            build_bug_bounty_markdown_triage,
+            generate_web_report,
+        )
+
+        # 1. Missing HSTS downgraded to MEDIUM with CVSS 4.2 (AC:H/UI:R)
+        hsts_hdr_findings = HeaderAuditor.audit_response_headers("https://rostec.ru/", httpx.Headers({}), 200)
+        hsts_item = [f for f in hsts_hdr_findings if "HSTS" in f["title"]]
+        self.assertEqual(len(hsts_item), 1)
+        self.assertEqual(hsts_item[0]["severity"], "MEDIUM")
+        hsts_meta = classify_bug_bounty_metadata(hsts_item[0], "https://rostec.ru/")
+        self.assertEqual(hsts_meta["cvss_vector"], "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:L/A:N")
+        self.assertEqual(hsts_meta["cvss_score"], "4.2")
+
+        # 2. Sensitive route filtering rejects editorial/media/news slugs like /en/media/news/2026-rosoboronexport-report/
+        route_samples = [
+            "/en/media/news/2026-rosoboronexport-report/",
+            "/en/blog/how-we-configured-oauth",
+            "/admin/config",
+            "/api/v1/auth/login",
+        ]
+        go_surface = run_surface_graph(route_samples, {}, "", findings=[])
+        py_surface = _python_fallback_surface_graph(route_samples, {}, "", findings=[])
+        for res in (go_surface, py_surface):
+            sens = res["sensitive_routes"]
+            self.assertNotIn("/en/media/news/2026-rosoboronexport-report/", sens)
+            self.assertNotIn("/en/blog/how-we-configured-oauth", sens)
+            self.assertIn("/admin/config", sens)
+            self.assertIn("/api/v1/auth/login", sens)
+
+        # 3. Rust web_spider handles multibyte Cyrillic UTF-8 without panicking or falling back to Python
+        with tempfile.TemporaryDirectory() as utf8_dir:
+            cyrillic_html = (
+                "<html><body><h1>Ростех кириллица тест "
+                + ("абвгдеёжзийклмнопрстуфхцчшщъыьэюя " * 5)
+                + "</h1><script>"
+                + "const api = '/api/v1/auth/status'; "
+                + "__webpack_require__.u = function(e) { return 'static/js/' + e + '.' + {\"101\":\"deadbeef\"}[e] + '.chunk.js'; }; "
+                + ("текст " * 300)
+                + "</script></body></html>"
+            )
+            with open(os.path.join(utf8_dir, "index.html"), "w", encoding="utf-8") as fp:
+                fp.write(cyrillic_html)
+            spider_res = run_spider_extractor(utf8_dir, depth=2)
+            self.assertEqual(spider_res.get("engine_mode"), "NATIVE_RUST")
+            paths = [ep.get("path") for ep in spider_res.get("endpoints", [])]
+            self.assertIn("/api/v1/auth/status", paths)
+
+        # 4. 7-finding report renders ALL 7 actionable findings in PDF and matches MD/SQLite telemetry 1:1
+        seven_findings = HeaderAuditor.audit_response_headers("https://rostec.ru/", httpx.Headers({}), 200)
+        seven_findings.extend(
+            HeaderAuditor.audit_cookies(
+                "https://rostec.ru/",
+                ["PHPSESSID=ZM2rtOwOgM34v823uMGPrp8y0SHs0gKX; path=/; HttpOnly"],
+                is_authenticated=False,
+            )
+        )
+        for f in seven_findings:
+            f["curl_command"] = generate_curl_poc(f)
+
+        actionable_expected = [f for f in seven_findings if f["severity"] != "INFO"]
+        self.assertEqual(len(actionable_expected), 7)
+
+        unified_report_data = {
+            "target_url": "https://rostec.ru/",
+            "scan_completed": "2026-11-20 03:11:23",
+            "scan_profile": "stealth_mode=True, shadow_mode=True, local_staging=False",
+            "initial_http_status": 200,
+            "scan_duration": 12.4,
+            "engine_mode": "spider=NATIVE_RUST, surface_graph=NATIVE_GO",
+            "pages_crawled": 25,
+            "endpoints_found": 410,
+            "crawl_notes": "Crawled 25 page(s) and 22 script(s); harvested 410 route(s).",
+            "findings": seven_findings,
+            "technologies": [{"category": "Web Server", "name": "Nginx", "evidence": "Server: nginx"}],
+            "sensitive_routes": ["/admin/config", "/api/v1/auth/login"],
+            "risk_score": 25,
+        }
+
+        with tempfile.TemporaryDirectory() as out_dir:
+            pdf_name = generate_web_report(unified_report_data, output_dir=out_dir)
+            pdf_path = os.path.join(out_dir, pdf_name)
+            self.assertTrue(os.path.exists(pdf_path))
+            if shutil.which("pdftotext"):
+                pdf_txt = subprocess.check_output(["pdftotext", pdf_path, "-"], text=True)
+                for idx, f in enumerate(actionable_expected, 1):
+                    self.assertIn(f"{idx}. [{f['severity']}]", pdf_txt, f"Finding #{idx} dropped in PDF: {f['title']}")
+                    self.assertIn(f["title"], pdf_txt)
+                self.assertIn("== SENSITIVE ROUTE ATTACK SURFACE ==", pdf_txt)
+                self.assertIn("/admin/config", pdf_txt)
+                self.assertIn("2026-11-20 03:11:23", pdf_txt)
+                self.assertIn("spider=NATIVE_RUST, surface_graph=NATIVE_GO", pdf_txt)
+
+        # Verify SQLite persistence and API Markdown export parity
+        scan_id = save_scan_record(
+            target_url=unified_report_data["target_url"],
+            findings=seven_findings,
+            endpoints=[{"url": "/admin/config", "method": "GET"}],
+            pages_crawled=25,
+            report_file="",
+            risk_score=25,
+            scan_completed=unified_report_data["scan_completed"],
+            scan_profile=unified_report_data["scan_profile"],
+            initial_http_status=unified_report_data["initial_http_status"],
+            scan_duration=unified_report_data["scan_duration"],
+            engine_mode=unified_report_data["engine_mode"],
+            crawl_notes=unified_report_data["crawl_notes"],
+            sensitive_routes=unified_report_data["sensitive_routes"],
+            technologies=unified_report_data["technologies"],
+        )
+        scan_row, db_findings, db_endpoints = get_scan_by_id(scan_id)
+        md_direct = build_bug_bounty_markdown_triage(unified_report_data, seven_findings, db_endpoints)
+        client = TestClient(app)
+        api_md_resp = client.get(f"/api/scans/{scan_id}/export/markdown")
+        self.assertEqual(api_md_resp.status_code, 200)
+        md_api = api_md_resp.text
+        for expected_snippet in (
+            "- Scan Completed: 2026-11-20 03:11:23",
+            "- Scan Profile: stealth_mode=True, shadow_mode=True, local_staging=False",
+            "- Initial HTTP Status: 200",
+            "- Scan Duration: 12.4s",
+            "- Engine Mode: spider=NATIVE_RUST, surface_graph=NATIVE_GO",
+            "- Crawl Notes: Crawled 25 page(s) and 22 script(s); harvested 410 route(s).",
+            "### Detected Technologies & Stack",
+            "### Sensitive Route Attack Surface",
+            "/admin/config",
+        ):
+            self.assertIn(expected_snippet, md_direct)
+            self.assertIn(expected_snippet, md_api)
+
 if __name__ == "__main__":
     unittest.main()
 

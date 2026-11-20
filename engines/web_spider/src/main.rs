@@ -589,6 +589,30 @@ fn extract_html_assets(
     }
 }
 
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else {
+        let mut i = index;
+        while i > 0 && !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    }
+}
+
+fn ceil_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        s.len()
+    } else {
+        let mut i = index;
+        while i < s.len() && !s.is_char_boundary(i) {
+            i += 1;
+        }
+        i
+    }
+}
+
 fn resolve_webpack_chunks(content: &str, scripts: &mut Vec<String>) {
     let needles = ["__webpack_require__.u", "jsonpScriptSrc"];
     let prefix_re_opt = compile_regex(r#"['"]((?:static/|assets/)?js/?)['"]"#);
@@ -599,7 +623,7 @@ fn resolve_webpack_chunks(content: &str, scripts: &mut Vec<String>) {
         let mut start_idx = 0;
         while let Some(rel_idx) = content[start_idx..].find(needle) {
             let found_idx = start_idx + rel_idx;
-            let end_idx = (found_idx + 1500).min(content.len());
+            let end_idx = floor_char_boundary(content, (found_idx + 1500).min(content.len()));
             let slice = &content[found_idx..end_idx];
 
             let suffix = if slice.contains(".chunk.js") {
@@ -929,11 +953,12 @@ fn extract_endpoint_patterns(
             content[..mat.start()].matches('\n').count() + 1
         };
 
-        let start = mat.start().saturating_sub(40);
-        let end = (mat.end() + 60).min(content.len());
+        let start = floor_char_boundary(content, mat.start().saturating_sub(40));
+        let end = ceil_char_boundary(content, (mat.end() + 60).min(content.len()));
         let mut snippet = content[start..end].replace('\n', " ").trim().to_string();
         if snippet.len() > 140 {
-            snippet = format!("{}...", &snippet[..137]);
+            let cut = floor_char_boundary(&snippet, 137);
+            snippet = format!("{}...", &snippet[..cut]);
         }
 
         let finding = EndpointFinding {
@@ -971,5 +996,22 @@ mod tests {
         let frag = emit_oob_kpi_fragment("100", "25", "50", "25");
         assert!(frag.contains("hx-swap-oob=\"true\""));
         assert!(frag.contains("id=\"kpi-verified-tp\""));
+    }
+
+    #[test]
+    fn test_utf8_multibyte_cyrillic_no_panic() {
+        let cyrillic_prefix = "Привет мир кириллица текст префикс для теста ";
+        let cyrillic_suffix =
+            " продолжение кириллического текста после ссылки без паники для буфера";
+        let html = format!(
+            "{}\"/api/v1/auth/status\"{}\n__webpack_require__.u = function(e) {{ return {{\"101\":\"deadbeef\"}}[e] + \"{}\"; }};",
+            cyrillic_prefix, cyrillic_suffix, cyrillic_prefix.repeat(25)
+        );
+        let mut endpoints = Vec::new();
+        let mut scripts = Vec::new();
+        extract_endpoint_patterns("index.html", &html, &mut endpoints, "");
+        resolve_webpack_chunks(&html, &mut scripts);
+        assert!(endpoints.iter().any(|e| e.path == "/api/v1/auth/status"));
+        assert!(scripts.iter().any(|s| s.contains("101.deadbeef")));
     }
 }

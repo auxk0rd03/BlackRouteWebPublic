@@ -122,9 +122,9 @@ def classify_bug_bounty_metadata(finding: Dict[str, Any], default_target: str = 
             if sev == "HIGH":
                 cvss_vector, cvss_score = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N", "7.5"
             elif sev == "MEDIUM":
-                cvss_vector, cvss_score = "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N", "5.3"
+                cvss_vector, cvss_score = "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:L/A:N", "4.2"
             elif sev == "LOW":
-                cvss_vector, cvss_score = "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:N/I:L/A:N", "3.1"
+                cvss_vector, cvss_score = "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:N/A:N", "3.1"
     elif "cors" in title_lower or "origin reflection" in title_lower:
         cwe = "CWE-942: Permissive Cross-domain Policy with Untrusted Domains (CORS)"
         if not cvss_vector:
@@ -464,11 +464,21 @@ def build_bug_bounty_markdown_triage(
         f"- Informational Notices: {len(info_findings)}",
         f"- Third-Party / Vendor Notices: {len(vendor_findings)} (Summarized in Section B)",
         "",
+    ]
+
+    technologies = scan.get("technologies") or []
+    if technologies:
+        lines.append("### Detected Technologies & Stack")
+        for t in technologies:
+            lines.append(f"- **[{t.get('category', 'Stack')}]** {t.get('name', 'Unknown')}: {t.get('evidence', '')}")
+        lines.append("")
+
+    lines.extend([
         "### Executive Summary & Chained Triage Impact Statement",
         impact_statement,
         "",
         "### Primary Findings"
-    ]
+    ])
 
     if not actionable_findings:
         lines.append("No actionable infrastructure vulnerabilities identified.")
@@ -538,6 +548,13 @@ def build_bug_bounty_markdown_triage(
     else:
         lines.append("None detected.")
     lines.append("")
+
+    sensitive_routes = scan.get("sensitive_routes") or []
+    if sensitive_routes:
+        lines.append("### Sensitive Route Attack Surface")
+        for r in sensitive_routes[:40]:
+            lines.append(f"- `{r}`")
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -711,7 +728,7 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
     # 1. Executive Summary
     pdf.set_font("Courier", 'B', 11)
     pdf.set_x(pdf.l_margin)
-    pdf.multi_cell(pdf.epw, 7, sanitize("== EXECUTIVE MISSION AUDIT SUMMARY =="))
+    pdf.multi_cell(pdf.epw, 7, sanitize("== EXECUTIVE MISSION AUDIT SUMMARY =="), align="L")
     pdf.ln(2)
 
     pdf.set_font("Courier", size=9)
@@ -732,7 +749,7 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
     ]
     for line in summary_lines:
         pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(pdf.epw, 5, sanitize(line))
+        pdf.multi_cell(pdf.epw, 5, sanitize(line), align="L")
     pdf.ln(3)
 
     # Technology Fingerprints
@@ -740,11 +757,11 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
     if techs:
         pdf.set_font("Courier", 'B', 10)
         pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(pdf.epw, 6, sanitize("Detected Technologies & Stack:"))
+        pdf.multi_cell(pdf.epw, 6, sanitize("Detected Technologies & Stack:"), align="L")
         pdf.set_font("Courier", size=8)
         for t in techs:
             pdf.set_x(pdf.l_margin)
-            pdf.multi_cell(pdf.epw, 4.5, sanitize(f"  - [{t.get('category', 'Stack')}] {t.get('name', 'Unknown')}: {t.get('evidence', '')}"))
+            pdf.multi_cell(pdf.epw, 4.5, sanitize(f"  - [{t.get('category', 'Stack')}] {t.get('name', 'Unknown')}: {t.get('evidence', '')}"), align="L")
         pdf.ln(3)
 
     # Severity Summary Counts for Actionable Findings (excludes INFO)
@@ -762,6 +779,7 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
             f"Actionable Threat Distribution: CRIT: {crit_count} | HIGH: {high_count} | "
             f"MED: {med_count} | LOW: {low_count} (INFO Notices: {len(info_findings)})"
         ),
+        align="L",
     )
     pdf.ln(2)
 
@@ -770,23 +788,23 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
     impact_text = build_chained_impact_statement(target_url, actionable_findings, risk_score_val)
     pdf.set_font("Courier", 'B', 9)
     pdf.set_x(pdf.l_margin)
-    pdf.multi_cell(pdf.epw, 6, sanitize("Executive Summary & Chained Triage Impact Statement:"))
+    pdf.multi_cell(pdf.epw, 6, sanitize("Executive Summary & Chained Triage Impact Statement:"), align="L")
     pdf.set_font("Courier", size=8)
     pdf.set_x(pdf.l_margin)
-    pdf.multi_cell(pdf.epw, 4.5, sanitize(impact_text))
+    pdf.multi_cell(pdf.epw, 4.5, sanitize(impact_text), align="L")
     pdf.ln(4)
 
     # 2. Section A: Actionable Infrastructure Vulnerabilities (Bug Bounty Submission Structure)
     pdf.set_font("Courier", 'B', 11)
     pdf.set_text_color(0, 0, 0)
     pdf.set_x(pdf.l_margin)
-    pdf.multi_cell(pdf.epw, 7, sanitize(f"== SECTION A: ACTIONABLE INFRASTRUCTURE VULNERABILITIES ({len(actionable_findings)}) =="))
+    pdf.multi_cell(pdf.epw, 7, sanitize(f"== SECTION A: ACTIONABLE INFRASTRUCTURE VULNERABILITIES ({len(actionable_findings)}) =="), align="L")
     pdf.ln(2)
 
     if not actionable_findings:
         pdf.set_font("Courier", size=9)
         pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(pdf.epw, 6, sanitize("No actionable infrastructure vulnerabilities or defects detected."))
+        pdf.multi_cell(pdf.epw, 6, sanitize("No actionable infrastructure vulnerabilities or defects detected."), align="L")
         pdf.ln(4)
     else:
         for idx, f in enumerate(actionable_findings, 1):
@@ -801,39 +819,46 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
             curl_cmd = ensure_stealth_curl_poc(f.get("curl_command", ""), endpoint)
             meta = classify_bug_bounty_metadata(f, target_url)
 
-            with pdf.unbreakable():
-                if sev == "CRITICAL":
-                    pdf.set_text_color(220, 20, 20)
-                elif sev == "HIGH":
-                    pdf.set_text_color(230, 80, 0)
-                elif sev == "MEDIUM":
-                    pdf.set_text_color(180, 140, 0)
-                elif sev == "LOW":
-                    pdf.set_text_color(40, 120, 180)
-                else:
-                    pdf.set_text_color(100, 100, 100)
+            repro_block = "\n".join(f"  {step}" for step in meta["reproduction_steps"])
+            details = (
+                f"Target Endpoint: {endpoint}\n"
+                f"CWE Classification: {meta['cwe']}\n"
+                f"CVSS v3.1 Base Vector: {meta['cvss_vector']} (Score: {meta['cvss_score']})\n"
+                f"Description: {desc}\n"
+                f"Evidence: {evidence}\n"
+                f"Step-by-Step Reproduction Guide:\n{repro_block}\n"
+                f"Actionable Remediation Guidance: {remediation}\n"
+                f"Reproducible Stealth cURL PoC:\n{curl_cmd}\n"
+            )
+            sanitized_header = sanitize(f"{idx}. [{sev}] [{cat}] (Conf: {conf}) {title}")
+            sanitized_details = sanitize(details)
+            header_lines = sum(max(1, (len(ln) + 94) // 95) for ln in sanitized_header.splitlines())
+            detail_lines = sum(max(1, (len(ln) + 94) // 95) for ln in sanitized_details.splitlines())
+            estimated_height = (header_lines + detail_lines + 2) * 4.6
+            remaining_space = (pdf.h - pdf.b_margin) - pdf.get_y()
+            if pdf.get_y() > 45 and (remaining_space < min(estimated_height, 125) or pdf.get_y() > 210):
+                pdf.add_page()
 
-                pdf.set_font("Courier", 'B', 9)
-                pdf.set_x(pdf.l_margin)
-                pdf.multi_cell(pdf.epw, 5, sanitize(f"{idx}. [{sev}] [{cat}] (Conf: {conf}) {title}"))
+            if sev == "CRITICAL":
+                pdf.set_text_color(220, 20, 20)
+            elif sev == "HIGH":
+                pdf.set_text_color(230, 80, 0)
+            elif sev == "MEDIUM":
+                pdf.set_text_color(180, 140, 0)
+            elif sev == "LOW":
+                pdf.set_text_color(40, 120, 180)
+            else:
+                pdf.set_text_color(100, 100, 100)
 
-                pdf.set_text_color(40, 40, 40)
-                pdf.set_font("Courier", size=8)
+            pdf.set_font("Courier", 'B', 9)
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(pdf.epw, 5, sanitized_header, align="L")
 
-                repro_block = "\n".join(f"  {step}" for step in meta["reproduction_steps"])
-                details = (
-                    f"Target Endpoint: {endpoint}\n"
-                    f"CWE Classification: {meta['cwe']}\n"
-                    f"CVSS v3.1 Base Vector: {meta['cvss_vector']} (Score: {meta['cvss_score']})\n"
-                    f"Description: {desc}\n"
-                    f"Evidence: {evidence}\n"
-                    f"Step-by-Step Reproduction Guide:\n{repro_block}\n"
-                    f"Actionable Remediation Guidance: {remediation}\n"
-                    f"Reproducible Stealth cURL PoC:\n{curl_cmd}\n"
-                )
-                pdf.set_x(pdf.l_margin)
-                pdf.multi_cell(pdf.epw, 4.5, sanitize(details))
-                pdf.ln(3)
+            pdf.set_text_color(40, 40, 40)
+            pdf.set_font("Courier", size=8)
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(pdf.epw, 4.5, sanitized_details, align="L")
+            pdf.ln(3)
 
     # Informational Posture Notices (non-actionable)
     if info_findings:
@@ -841,7 +866,7 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
         pdf.set_font("Courier", 'B', 10)
         pdf.set_text_color(60, 60, 60)
         pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(pdf.epw, 6, sanitize(f"== INFORMATIONAL POSTURE NOTICES ({len(info_findings)}) =="))
+        pdf.multi_cell(pdf.epw, 6, sanitize(f"== INFORMATIONAL POSTURE NOTICES ({len(info_findings)}) =="), align="L")
         pdf.set_font("Courier", size=8)
         for idx, inf in enumerate(info_findings, 1):
             meta = classify_bug_bounty_metadata(inf, target_url)
@@ -850,7 +875,7 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
                 f"({meta['cwe']} | CVSS: {meta['cvss_score']}) - {inf.get('endpoint', target_url)}"
             )
             pdf.set_x(pdf.l_margin)
-            pdf.multi_cell(pdf.epw, 4.5, sanitize(inf_line))
+            pdf.multi_cell(pdf.epw, 4.5, sanitize(inf_line), align="L")
         pdf.ln(3)
 
     # 3. Section B: Third-Party & Vendor Observations (Always Rendered)
@@ -862,14 +887,14 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
     pdf.set_font("Courier", 'B', 11)
     pdf.set_text_color(0, 0, 0)
     pdf.set_x(pdf.l_margin)
-    pdf.multi_cell(pdf.epw, 7, sanitize(f"== SECTION B: THIRD-PARTY & VENDOR OBSERVATIONS ({len(vendor_findings)}) =="))
+    pdf.multi_cell(pdf.epw, 7, sanitize(f"== SECTION B: THIRD-PARTY & VENDOR OBSERVATIONS ({len(vendor_findings)}) =="), align="L")
     pdf.ln(2)
 
     if not vendor_findings:
         pdf.set_font("Courier", size=9)
         pdf.set_text_color(60, 60, 60)
         pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(pdf.epw, 5, sanitize("None detected."))
+        pdf.multi_cell(pdf.epw, 5, sanitize("None detected."), align="L")
         pdf.ln(3)
     else:
         pdf.set_font("Courier", 'I', 8)
@@ -880,7 +905,7 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
             "mechanisms and are not first-party session vulnerabilities."
         )
         pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(pdf.epw, 4, sanitize(notice_text))
+        pdf.multi_cell(pdf.epw, 4, sanitize(notice_text), align="L")
         pdf.ln(3)
 
         def draw_table_header():
@@ -936,14 +961,15 @@ def generate_web_report(data: Dict[str, Any], output_dir: str = ".") -> str:
             pdf.ln(4)
         pdf.set_font("Courier", 'B', 11)
         pdf.set_text_color(0, 0, 0)
-        pdf.cell(0, 8, sanitize("== SENSITIVE ROUTE ATTACK SURFACE =="))
-        pdf.ln(7)
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(pdf.epw, 7, sanitize("== SENSITIVE ROUTE ATTACK SURFACE =="), align="L")
+        pdf.ln(1)
         pdf.set_font("Courier", size=8)
         for r in sensitive_routes[:40]:
             if pdf.get_y() > 265:
                 pdf.add_page()
-            pdf.cell(0, 5, sanitize(f"  * {r}"))
-            pdf.ln(5)
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(pdf.epw, 4.5, sanitize(f"  * {r}"), align="L")
 
     # Save artifact within validated output directory boundary
     if not output_dir or "\x00" in str(output_dir):

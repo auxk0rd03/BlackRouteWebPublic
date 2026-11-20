@@ -1,5 +1,6 @@
 import asyncio
 import collections
+import datetime
 import hashlib
 import html
 import os
@@ -113,6 +114,8 @@ def generate_target_output_artifacts(
         "engine_mode": report_data.get("engine_mode", ""),
         "crawl_notes": report_data.get("crawl_notes", ""),
         "scan_completed": report_data.get("scan_completed", ""),
+        "sensitive_routes": report_data.get("sensitive_routes", []),
+        "technologies": report_data.get("technologies", []),
     }
     md_content = build_markdown_triage(scan_meta, findings, endpoints)
     md_path.write_text(md_content, encoding="utf-8")
@@ -531,6 +534,7 @@ class WebScanner:
     ) -> Optional[int]:
         """Generate PDF/Markdown reports, persist scan record to SQLite, and populate Output/Targ00N/ if applicable."""
         self.risk_score = holistic_risk
+        scan_completed = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         scan_profile = (
             f"stealth_mode={self.stealth_mode}, shadow_mode={self.shadow_mode}, "
             f"local_staging={self.local_staging}"
@@ -538,6 +542,7 @@ class WebScanner:
         engine_mode = f"spider={self.spider_engine_mode}, surface_graph={self.graph_engine_mode}"
         report_data = {
             "target_url": validated_url,
+            "scan_completed": scan_completed,
             "pages_crawled": self.pages_crawled,
             "endpoints_found": len(self.endpoints),
             "findings": self.findings,
@@ -574,7 +579,15 @@ class WebScanner:
                 pages_crawled=self.pages_crawled,
                 report_file=report_file,
                 status=status,
-                risk_score=holistic_risk
+                risk_score=holistic_risk,
+                scan_completed=scan_completed,
+                scan_profile=scan_profile,
+                initial_http_status=self.initial_http_status,
+                scan_duration=self.scan_duration_s,
+                engine_mode=engine_mode,
+                crawl_notes=self.crawl_notes,
+                sensitive_routes=sensitive_routes,
+                technologies=techs,
             )
             self.scan_id = scan_id
             self.log("Scan record persisted to local SQLite database with cURL commands.", "info")
@@ -764,14 +777,61 @@ class WebScanner:
             crawl_queue = collections.deque([(validated_url, 0)])
             downloaded_scripts = []
             seen_scripts = set()
+            crawl_deadline = time.perf_counter() + 25.0
+            script_sem = asyncio.Semaphore(5)
 
-            async with httpx.AsyncClient(headers=req_headers, verify=False, follow_redirects=True, timeout=10.0) as crawl_client:
-                while crawl_queue and len(visited_pages) <= max_crawl_pages:
+            async with httpx.AsyncClient(headers=req_headers, verify=False, follow_redirects=True, timeout=6.0) as crawl_client:
+                async def _fetch_script_and_chunks(s_url: str) -> None:
+                    if time.perf_counter() >= crawl_deadline or len(downloaded_scripts) >= max_crawl_scripts:
+                        return
+                    async with script_sem:
+                        if time.perf_counter() >= crawl_deadline or len(downloaded_scripts) >= max_crawl_scripts:
+                            return
+                        try:
+                            js_resp = await crawl_client.get(s_url)
+                            if js_resp.status_code == 200 and len(js_resp.content) <= settings.MAX_JS_ASSET_SIZE:
+                                if len(downloaded_scripts) >= max_crawl_scripts:
+                                    return
+                                s_hash = hashlib.sha256(s_url.encode("utf-8")).hexdigest()[:12]
+                                s_filename = sanitize_filename(f"asset_{s_hash}.js", allowed_extensions=(".js",))
+                                s_path = str(resolve_sandboxed_path(self.temp_dir, s_filename))
+                                async with aiofiles.open(s_path, "wb") as f:
+                                    await f.write(js_resp.content)
+                                downloaded_scripts.append((s_url, s_path, js_resp.text))
+                                self.harvested_content.append(js_resp.text)
+
+                                # Webpack / Vite / Rollup Chunk Resolver:
+                                # Detect runtime chunks or chunk maps and harvest split code chunks
+                                split_chunks = _resolve_webpack_chunks_python(js_resp.text)
+                                for sc in split_chunks:
+                                    if len(downloaded_scripts) >= max_crawl_scripts or time.perf_counter() >= crawl_deadline:
+                                        break
+                                    chunk_url = urllib.parse.urljoin(s_url, sc)
+                                    if chunk_url not in seen_scripts:
+                                        seen_scripts.add(chunk_url)
+                                        try:
+                                            c_resp = await crawl_client.get(chunk_url)
+                                            if c_resp.status_code == 200 and len(c_resp.content) <= settings.MAX_JS_ASSET_SIZE:
+                                                if len(downloaded_scripts) >= max_crawl_scripts:
+                                                    break
+                                                c_hash = hashlib.sha256(chunk_url.encode("utf-8")).hexdigest()[:12]
+                                                c_filename = sanitize_filename(f"chunk_{c_hash}.js", allowed_extensions=(".js",))
+                                                c_path = str(resolve_sandboxed_path(self.temp_dir, c_filename))
+                                                async with aiofiles.open(c_path, "wb") as f:
+                                                    await f.write(c_resp.content)
+                                                downloaded_scripts.append((chunk_url, c_path, c_resp.text))
+                                                self.harvested_content.append(c_resp.text)
+                                        except Exception:
+                                            pass
+                        except Exception:
+                            pass
+
+                while crawl_queue and len(visited_pages) <= max_crawl_pages and time.perf_counter() < crawl_deadline:
                     curr_url, curr_depth = crawl_queue.popleft()
-                    
+
                     page_content = base_content if curr_url == validated_url else None
                     if page_content is None:
-                        await asyncio.sleep(0.04)
+                        await asyncio.sleep(0.02)
                         try:
                             resp = await crawl_client.get(curr_url)
                             if resp.status_code == 200 and "text/html" in resp.headers.get("content-type", ""):
@@ -792,49 +852,20 @@ class WebScanner:
                     # Parse HTML links and scripts
                     soup = BeautifulSoup(page_content, "html.parser")
 
-                    # Discovered scripts from HTML
+                    # Discovered scripts from HTML (concurrent bounded downloads)
+                    batch_script_urls = []
                     for s in soup.find_all("script", src=True):
                         s_src = s.get("src", "").strip()
-                        if s_src and len(downloaded_scripts) < max_crawl_scripts:
+                        if s_src and (len(downloaded_scripts) + len(batch_script_urls)) < max_crawl_scripts:
                             s_url = urllib.parse.urljoin(curr_url, s_src)
                             if s_url not in seen_scripts:
                                 seen_scripts.add(s_url)
-                                await asyncio.sleep(0.04)
-                                try:
-                                    js_resp = await crawl_client.get(s_url)
-                                    if js_resp.status_code == 200 and len(js_resp.content) <= settings.MAX_JS_ASSET_SIZE:
-                                        s_hash = hashlib.sha256(s_url.encode("utf-8")).hexdigest()[:12]
-                                        s_filename = sanitize_filename(f"asset_{s_hash}.js", allowed_extensions=(".js",))
-                                        s_path = str(resolve_sandboxed_path(self.temp_dir, s_filename))
-                                        async with aiofiles.open(s_path, "wb") as f:
-                                            await f.write(js_resp.content)
-                                        downloaded_scripts.append((s_url, s_path, js_resp.text))
-                                        self.harvested_content.append(js_resp.text)
-
-                                        # Webpack / Vite / Rollup Chunk Resolver:
-                                        # Detect runtime chunks or chunk maps and harvest split code chunks
-                                        split_chunks = _resolve_webpack_chunks_python(js_resp.text)
-                                        for sc in split_chunks:
-                                            if len(downloaded_scripts) >= max_crawl_scripts:
-                                                break
-                                            chunk_url = urllib.parse.urljoin(s_url, sc)
-                                            if chunk_url not in seen_scripts:
-                                                seen_scripts.add(chunk_url)
-                                                await asyncio.sleep(0.04)
-                                                try:
-                                                    c_resp = await crawl_client.get(chunk_url)
-                                                    if c_resp.status_code == 200 and len(c_resp.content) <= settings.MAX_JS_ASSET_SIZE:
-                                                        c_hash = hashlib.sha256(chunk_url.encode("utf-8")).hexdigest()[:12]
-                                                        c_filename = sanitize_filename(f"chunk_{c_hash}.js", allowed_extensions=(".js",))
-                                                        c_path = str(resolve_sandboxed_path(self.temp_dir, c_filename))
-                                                        async with aiofiles.open(c_path, "wb") as f:
-                                                            await f.write(c_resp.content)
-                                                        downloaded_scripts.append((chunk_url, c_path, c_resp.text))
-                                                        self.harvested_content.append(c_resp.text)
-                                                except Exception:
-                                                    pass
-                                except Exception:
-                                    pass
+                                batch_script_urls.append(s_url)
+                    if batch_script_urls and time.perf_counter() < crawl_deadline:
+                        await asyncio.gather(
+                            *[_fetch_script_and_chunks(u) for u in batch_script_urls],
+                            return_exceptions=True,
+                        )
 
                     # Enqueue HTML links for bounded BFS traversal
                     if curr_depth + 1 <= crawl_depth:

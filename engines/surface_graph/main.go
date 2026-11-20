@@ -101,10 +101,56 @@ func isVendorRoute(ep string) bool {
 	return false
 }
 
-var sensitiveKeywords = []string{
-	"admin", "login", "auth", "oauth", "token", "secret", "config",
-	"actuator", "metrics", "upload", "debug", "test", "internal",
-	"graphql", "swagger", "openapi", "api-docs", "backup", "dump",
+var editorialOrStaticIgnoredDirs = []string{
+	"/news/", "/media/", "/blog/", "/press/", "/articles/",
+	"/events/", "/stories/", "/publications/",
+}
+
+var ignoredStaticSuffixes = []string{
+	".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg",
+	".css", ".ico", ".woff", ".woff2",
+}
+
+var sensitiveStructuralMarkers = []string{
+	"api-docs", "/.git", "/.env", "/graphql", "/swagger", "/openapi", "/actuator",
+}
+
+var sensitiveRouteTokens = map[string]bool{
+	"admin": true, "login": true, "signin": true, "auth": true, "oauth": true,
+	"token": true, "secret": true, "config": true, "actuator": true, "metrics": true,
+	"upload": true, "debug": true, "internal": true, "graphql": true, "swagger": true,
+	"openapi": true, "backup": true, "dump": true,
+}
+
+func isSensitiveRoute(pathOnly string) bool {
+	if isVendorRoute(pathOnly) {
+		return false
+	}
+	pathLower := strings.ToLower(pathOnly)
+	for _, ignored := range editorialOrStaticIgnoredDirs {
+		if strings.Contains(pathLower, ignored) {
+			return false
+		}
+	}
+	for _, suf := range ignoredStaticSuffixes {
+		if strings.HasSuffix(pathLower, suf) {
+			return false
+		}
+	}
+	for _, marker := range sensitiveStructuralMarkers {
+		if strings.Contains(pathLower, marker) {
+			return true
+		}
+	}
+	tokens := strings.FieldsFunc(pathLower, func(r rune) bool {
+		return r == '/' || r == '-' || r == '_' || r == '.'
+	})
+	for _, tok := range tokens {
+		if sensitiveRouteTokens[tok] {
+			return true
+		}
+	}
+	return false
 }
 
 func main() {
@@ -300,15 +346,9 @@ func analyzeSurface(payload InputPayload) SurfaceResult {
 
 		nodeSet[pathOnly] = true
 
-		// Check sensitive route (excluding third-party vendor script paths)
-		if !isVendorRoute(pathOnly) {
-			pathLower := strings.ToLower(pathOnly)
-			for _, kw := range sensitiveKeywords {
-				if strings.Contains(pathLower, kw) {
-					sensitiveRoutes = append(sensitiveRoutes, pathOnly)
-					break
-				}
-			}
+		// Check sensitive route (excluding vendor, editorial/news/media, and static paths)
+		if isSensitiveRoute(pathOnly) {
+			sensitiveRoutes = append(sensitiveRoutes, pathOnly)
 		}
 
 		// Build topology edges (hierarchy)

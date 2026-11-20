@@ -156,7 +156,7 @@ class HeaderAuditor:
             hsts = h_lower.get("strict-transport-security")
             if not hsts:
                 findings.append({
-                    "severity": "HIGH",
+                    "severity": "MEDIUM",
                     "category": "HEADERS",
                     "rule_id": "BR-HEADER-HSTS",
                     "title": "Missing Strict-Transport-Security (HSTS)",
