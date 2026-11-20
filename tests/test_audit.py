@@ -116,6 +116,7 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         first_party = HeaderAuditor.audit_cookies(
             "https://example.com",
             ["sessionid=xyz123; Path=/"],
+            is_authenticated=True,
         )
         session_http_only = [f for f in first_party if "HttpOnly" in f["title"]]
         self.assertTrue(session_http_only)
@@ -147,28 +148,60 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         self.assertIn("misconfiguration breaks", findings[0]["description"])
 
     def test_cors_dynamic_origin_reflection(self):
-        # Dynamic reflection of randomized benign origin with credentials
-        random_origin = "https://probe-d8f9a2.example.com"
-        findings = HeaderAuditor.audit_cors(
+        # 1. External third-party origin reflection with credentials -> HIGH (unauthenticated) / CRITICAL (authenticated)
+        ext_origin = "https://probe-d8f9a2.example.invalid"
+        findings_unauth = HeaderAuditor.audit_cors(
             "https://example.com/api",
-            acao_header=random_origin,
+            acao_header=ext_origin,
             acac_header="true",
-            tested_origin=random_origin
+            tested_origin=ext_origin,
+            is_authenticated=False,
         )
-        self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]["severity"], "CRITICAL")
-        self.assertIn("Insecure Origin Reflection with Credentials", findings[0]["title"])
-        self.assertEqual(findings[0]["tested_origin"], random_origin)
+        self.assertEqual(len(findings_unauth), 1)
+        self.assertEqual(findings_unauth[0]["severity"], "HIGH")
+        self.assertIn("Insecure Origin Reflection with Credentials", findings_unauth[0]["title"])
+        self.assertEqual(findings_unauth[0]["tested_origin"], ext_origin)
 
-        # Dynamic reflection without credentials -> HIGH severity
-        findings_nocred = HeaderAuditor.audit_cors(
+        findings_auth = HeaderAuditor.audit_cors(
             "https://example.com/api",
-            acao_header=random_origin,
-            acac_header="false",
-            tested_origin=random_origin
+            acao_header=ext_origin,
+            acac_header="true",
+            tested_origin=ext_origin,
+            is_authenticated=True,
         )
-        self.assertEqual(len(findings_nocred), 1)
-        self.assertEqual(findings_nocred[0]["severity"], "HIGH")
+        self.assertEqual(len(findings_auth), 1)
+        self.assertEqual(findings_auth[0]["severity"], "CRITICAL")
+
+        # External reflection without credentials -> MEDIUM
+        findings_ext_nocred = HeaderAuditor.audit_cors(
+            "https://example.com/api",
+            acao_header=ext_origin,
+            acac_header="false",
+            tested_origin=ext_origin,
+        )
+        self.assertEqual(len(findings_ext_nocred), 1)
+        self.assertEqual(findings_ext_nocred[0]["severity"], "MEDIUM")
+
+        # 2. Same-site subdomain reflection -> MEDIUM with credentials, LOW without credentials
+        sub_origin = "https://probe-d8f9a2.example.com"
+        findings_sub_cred = HeaderAuditor.audit_cors(
+            "https://example.com/api",
+            acao_header=sub_origin,
+            acac_header="true",
+            tested_origin=sub_origin,
+        )
+        self.assertEqual(len(findings_sub_cred), 1)
+        self.assertEqual(findings_sub_cred[0]["severity"], "MEDIUM")
+        self.assertIn("CORS Subdomain Origin Reflection", findings_sub_cred[0]["title"])
+
+        findings_sub_nocred = HeaderAuditor.audit_cors(
+            "https://example.com/api",
+            acao_header=sub_origin,
+            acac_header="false",
+            tested_origin=sub_origin,
+        )
+        self.assertEqual(len(findings_sub_nocred), 1)
+        self.assertEqual(findings_sub_nocred[0]["severity"], "LOW")
 
     def test_shannon_entropy_calculation(self):
         # Repetitive strings have near-zero entropy
@@ -1205,6 +1238,193 @@ class TestBlackRouteWebAudit(unittest.TestCase):
         self.assertEqual(client.get("/api/compliance/cmmc").status_code, 200)
         self.assertEqual(client.get("/api/compliance/stig").status_code, 200)
         self.assertEqual(client.get("/api/network-sense").status_code, 200)
+
+    def test_qa_remediation_regression_suite(self):
+        """QA regression checks for CORS tiering, CSP directive parser, cookie auth-context, CVSS alignment, impact gating, risk cap, PoCs, and report formatting."""
+        import tempfile
+        from Sources.Utilities.vids_pdf_gen import (
+            classify_bug_bounty_metadata,
+            build_chained_impact_statement,
+            build_bug_bounty_markdown_triage,
+            severity_from_cvss_score,
+            truncate_clean,
+            generate_web_report,
+        )
+
+        # (a) Subdomain CORS != Critical
+        sub_cors = HeaderAuditor.audit_cors(
+            "https://yandex.com/",
+            acao_header="https://probe-a225b0f2.yandex.com",
+            acac_header="true",
+            tested_origin="https://probe-a225b0f2.yandex.com",
+            is_authenticated=False,
+        )
+        self.assertEqual(len(sub_cors), 1)
+        self.assertNotEqual(sub_cors[0]["severity"], "CRITICAL")
+        self.assertEqual(sub_cors[0]["severity"], "MEDIUM")
+        self.assertEqual(sub_cors[0]["title"], "CORS Subdomain Origin Reflection with Credentials")
+
+        # (b) CSP evidence contains the matched directive & honors style-src / nonce fallbacks
+        csp_mixed = (
+            "img-src *.verify.yandex.ru *.ya.ru; "
+            "style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+        )
+        csp_findings = HeaderAuditor.audit_response_headers(
+            "https://yandex.com/",
+            httpx.Headers({
+                "Content-Security-Policy": csp_mixed,
+                "Strict-Transport-Security": "max-age=31536000",
+                "X-Frame-Options": "DENY",
+                "X-Content-Type-Options": "nosniff",
+            }),
+            200,
+        )
+        inline_f = [f for f in csp_findings if "'unsafe-inline'" in f["title"]]
+        eval_f = [f for f in csp_findings if "'unsafe-eval'" in f["title"]]
+        self.assertEqual(len(inline_f), 1)
+        self.assertEqual(len(eval_f), 1)
+        self.assertIn("script-src", inline_f[0]["evidence"])
+        self.assertNotIn("img-src", inline_f[0]["evidence"])
+        self.assertIn("script-src", eval_f[0]["evidence"])
+        self.assertNotIn("img-src", eval_f[0]["evidence"])
+
+        # Style-only unsafe-inline and script-src with nonce/sha256 fallback must suppress 'unsafe-inline'
+        csp_nonce = (
+            "img-src *; "
+            "style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline' 'nonce-r4nd0m'"
+        )
+        nonce_findings = HeaderAuditor.audit_response_headers(
+            "https://yandex.com/",
+            httpx.Headers({
+                "Content-Security-Policy": csp_nonce,
+                "Strict-Transport-Security": "max-age=31536000",
+                "X-Frame-Options": "DENY",
+                "X-Content-Type-Options": "nosniff",
+            }),
+            200,
+        )
+        self.assertFalse(any("'unsafe-inline'" in f["title"] for f in nonce_findings))
+        self.assertFalse(any("Wildcard" in f["title"] for f in nonce_findings))
+
+        # (c) Unauthenticated tracking/geo/consent/hint cookies != High
+        unauth_cookies = [
+            "yandex_gid=29645; Path=/; Domain=yandex.com; Secure; SameSite=None",
+            "yuidss=5414730781795158386; Path=/; Domain=yandex.com; Secure; SameSite=None",
+            "yandexuid=5414730781795158386; Path=/; Domain=.yandex.com; Secure; SameSite=None",
+            "yp=1797750386.ygu.1; Path=/; Domain=yandex.com; Secure; SameSite=None",
+            "is_gdpr=0; Path=/; Domain=.yandex.com; SameSite=None; Secure",
+            "is_gdpr_b=CLDqWBCyqAMoAg==; Path=/; Domain=.yandex.com; SameSite=None; Secure",
+            "_yasc=pLfnjkVcIe6LbtPB4Muktpl0Wfkk1TI; domain=.yandex.com; path=/; SameSite=None; Secure",
+            "bh=EkEiQ2hyb21pdW0iO3Y9IjEyNCIsICJHb29nbGUgQ2hyb21lIjt2PSIxMjQiLCAiTm90LUEuQnJhbmQiO3Y9Ijk5Ig==; Path=/; Domain=.yandex.com; SameSite=None; Secure",
+            "visitor_id=anon123; Path=/; Secure; SameSite=Lax",
+        ]
+        cookie_findings = HeaderAuditor.audit_cookies("https://yandex.com/", unauth_cookies, is_authenticated=False)
+        self.assertTrue(len(cookie_findings) > 0)
+        self.assertTrue(all(f["severity"] != "HIGH" for f in cookie_findings))
+
+        # (d) CVSS scores strictly match severity labels across all classes
+        cvss_samples = [
+            {"severity": "CRITICAL", "category": "HEADERS", "title": "Severe CORS Misconfiguration: Wildcard with Credentials"},
+            {"severity": "HIGH", "category": "HEADERS", "title": "CORS Insecure Origin Reflection with Credentials"},
+            {"severity": "MEDIUM", "category": "HEADERS", "title": "CORS Subdomain Origin Reflection with Credentials"},
+            {"severity": "LOW", "category": "HEADERS", "title": "CORS Subdomain Origin Reflection"},
+            {"severity": "HIGH", "category": "COOKIES", "title": "Cookie 'session_id' Missing 'HttpOnly' Flag"},
+            {"severity": "LOW", "category": "COOKIES", "title": "Cookie 'visitor_id' Missing 'HttpOnly' Flag"},
+            {"severity": "INFO", "category": "HEADERS", "title": "Missing Permissions-Policy"},
+            {"severity": "MEDIUM", "category": "HEADERS", "title": "Insecure CSP: 'unsafe-inline' Detected"},
+        ]
+        for sample in cvss_samples:
+            meta = classify_bug_bounty_metadata(sample, "https://yandex.com/")
+            score = float(meta["cvss_score"])
+            self.assertEqual(severity_from_cvss_score(score), sample["severity"], f"Mismatch for {sample}: {meta}")
+
+        # (e) Chained Impact text never mentions absent vulnerability classes
+        passive_sample = [
+            f for f in (csp_findings + sub_cors + cookie_findings)
+            if f["severity"] != "INFO"
+        ]
+        impact_text = build_chained_impact_statement("https://yandex.com/", passive_sample, 24)
+        self.assertNotIn("DOM sinks", impact_text)
+        self.assertNotIn("cleartext network interception", impact_text)
+        self.assertNotIn("SSL-stripping", impact_text)
+        self.assertNotIn("exposed API schemas", impact_text)
+        self.assertNotIn("GraphQL introspection", impact_text)
+        self.assertNotIn("Clickjacking", impact_text)
+
+        # (f) Category-capped risk score <= 40 for passive hygiene findings on 0-endpoint page
+        passive_hygiene = [
+            {"severity": "MEDIUM", "category": "HEADERS", "title": "Insecure CSP: 'unsafe-inline' Detected"},
+            {"severity": "MEDIUM", "category": "HEADERS", "title": "Insecure CSP: 'unsafe-eval' Detected"},
+            {"severity": "LOW", "category": "HEADERS", "title": "Missing Referrer-Policy Header"},
+            {"severity": "MEDIUM", "category": "HEADERS", "title": "CORS Subdomain Origin Reflection with Credentials"},
+            {"severity": "LOW", "category": "COOKIES", "title": "Cookie 'visitor_id' Missing 'HttpOnly' Flag"},
+            {"severity": "MEDIUM", "category": "COOKIES", "title": "Cookie 'pref' Missing 'Secure' Flag"},
+            {"severity": "LOW", "category": "COOKIES", "title": "Cookie 'pref' Missing 'SameSite' Attribute"},
+            {"severity": "INFO", "category": "HEADERS", "title": "Missing Permissions-Policy"},
+        ]
+        py_res = _python_fallback_surface_graph([], {}, "", findings=passive_hygiene)
+        go_res = run_surface_graph([], {}, "", findings=passive_hygiene)
+        self.assertLessEqual(py_res["risk_score"], 40)
+        self.assertLessEqual(go_res["risk_score"], 40)
+
+        # Reliable GET-header cURL PoCs (-D - -o /dev/null), token-boundary truncation, Markdown parity & Section B
+        for f in passive_hygiene:
+            f["endpoint"] = "https://yandex.com/"
+            f["curl_command"] = generate_curl_poc(f)
+        self.assertIn("curl -s -D - -o /dev/null", passive_hygiene[0]["curl_command"])
+        self.assertIn("curl -s -D - -o /dev/null", passive_hygiene[4]["curl_command"])
+
+        long_cookie = "Set-Cookie: bh=EkEiQ2hyb21pdW0i; Path=/; Domain=.yandex.com; Expires=Sun, 20 Dec 2026 07:06:26 GMT; Secure; SameSite=None"
+        truncated = truncate_clean(long_cookie, max_len=90)
+        self.assertTrue(truncated.endswith("..."))
+        self.assertFalse(truncated.endswith("Secu..."))
+
+        md = build_bug_bounty_markdown_triage(
+            {
+                "target_url": "https://yandex.com/",
+                "risk_score": go_res["risk_score"],
+                "pages_crawled": 1,
+                "endpoints_found": 0,
+                "scan_profile": "stealth_mode=True, shadow_mode=False, local_staging=False",
+                "initial_http_status": 200,
+                "scan_duration": 1.25,
+                "engine_mode": "spider=NATIVE_RUST, surface_graph=NATIVE_GO",
+                "crawl_notes": "Initial HTML returned 0 external scripts.",
+            },
+            passive_hygiene,
+            [],
+        )
+        self.assertNotIn("- **Remediation**:", md)
+        self.assertIn("- Scan Profile: stealth_mode=True", md)
+        self.assertIn("- Initial HTTP Status: 200", md)
+        self.assertIn("- Engine Mode: spider=NATIVE_RUST", md)
+        self.assertIn("- Crawl Notes: Initial HTML returned 0 external scripts.", md)
+        self.assertIn("- Informational Notices: 1", md)
+        self.assertIn("(Conf: ", md)
+        self.assertIn("### Third-Party & Vendor Observations (Section B)", md)
+        self.assertIn("None detected.", md)
+
+        with tempfile.TemporaryDirectory() as tmp_pdf_dir:
+            pdf_name = generate_web_report(
+                {
+                    "target_url": "https://yandex.com/",
+                    "pages_crawled": 1,
+                    "endpoints_found": 0,
+                    "findings": passive_hygiene + cookie_findings,
+                    "technologies": [],
+                    "sensitive_routes": [],
+                    "risk_score": go_res["risk_score"],
+                    "scan_profile": "stealth_mode=True, shadow_mode=False",
+                    "initial_http_status": 200,
+                    "scan_duration": 1.25,
+                    "engine_mode": "spider=NATIVE_RUST, surface_graph=NATIVE_GO",
+                    "crawl_notes": "0 static routes extracted.",
+                },
+                output_dir=tmp_pdf_dir,
+            )
+            self.assertTrue(os.path.exists(os.path.join(tmp_pdf_dir, pdf_name)))
 
 if __name__ == "__main__":
     unittest.main()

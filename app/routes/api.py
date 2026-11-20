@@ -493,17 +493,22 @@ async def generate_report_for_scan(scan_id: int):
     if not scan:
         return JSONResponse(status_code=404, content={"error": f"Scan ID {scan_id} not found."})
 
-    crit_count = sum(1 for f in findings if f.get("severity") == "CRITICAL")
-    high_count = sum(1 for f in findings if f.get("severity") == "HIGH")
-    med_count = sum(1 for f in findings if f.get("severity") == "MEDIUM")
-    low_count = sum(1 for f in findings if f.get("severity") == "LOW")
-    finding_impact = (crit_count * 25) + (high_count * 15) + (med_count * 5) + (low_count * 2)
-    risk_score = min(100, max(20, finding_impact)) if findings else 15
+    if not scan.get("risk_score"):
+        from app.core.engine_bridge import _python_fallback_surface_graph
+        risk_score = _python_fallback_surface_graph(
+            [e["url"] for e in endpoints if e.get("url")],
+            {},
+            "",
+            findings=findings,
+        ).get("risk_score", 15)
+    else:
+        risk_score = int(scan["risk_score"])
 
     sensitive_routes = [e["url"] for e in endpoints if any(s in e["url"] for s in ["/admin", "/api", "/auth", "/login", "/config"])]
 
     report_data = {
         "target_url": scan["target_url"],
+        "scan_completed": scan.get("timestamp", ""),
         "pages_crawled": scan["pages_crawled"],
         "endpoints_found": scan["endpoints_found"],
         "findings": findings,
@@ -991,6 +996,7 @@ async def export_batch_zip():
             ]
             report_data = {
                 "target_url": scan.get("target_url", ""),
+                "scan_completed": scan.get("timestamp", ""),
                 "pages_crawled": scan.get("pages_crawled", 0),
                 "endpoints_found": scan.get("endpoints_found", 0),
                 "findings": findings,

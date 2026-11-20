@@ -11,63 +11,103 @@ This document serves as the primary technical handover, architecture specificati
 ```text
 BlackRoute-Web-Linux_VersionPopOS/
 ├── .dockerignore                       # Docker build context exclusion rules
-├── .gitignore                          # Git ignore rules (binaries, venvs, databases, cache)
+├── .gitignore                          # Git ignore rules (binaries, venvs, databases, Output/Targ*, cache)
+├── BlackRouteWebToDo.md                # Enterprise ML Lakehouse & QA engineering tracking ledger
 ├── CyberNestLabsLogo.png               # Root brand logo asset
 ├── Dockerfile                          # Multi-stage production container build (Rust/Go -> Python 3.12)
 ├── docker-compose.yml                  # Container deployment specification with persistent volumes
 ├── LICENSE                             # CyberNest Labs Authorized Security Research & Dual-Use License
 ├── Handoff.md                          # Technical architecture & maintenance handover manual
 ├── README.md                           # Operational manual, setup instructions, disclaimer
+├── SBOM.cyclonedx.json                 # CycloneDX 1.5 Software Bill of Materials
+├── SBOM.md                             # Human-readable SBOM manifest
+├── SBOM.spdx.json                      # SPDX 2.3 Software Bill of Materials
 ├── requirements.txt                    # Python library dependency definitions
-├── blackroute_web.py                   # Master entrypoint, port scanner & server bootloader
+├── blackroute_web.py                   # Master entrypoint, port scanner, CWE middleware & server bootloader
+├── zstandard.py                        # Pure-Python/native Zstd compatibility adapter for lakehouse compression
 ├── dev.sh                              # Dual-Native Linux orchestrator (CN-DIR-2026-004)
 ├── dev.bat                             # Dual-Native Windows 10/11 orchestrator (CN-DIR-2026-004)
-├── launcher.sh                         # Unified Linux CLI launcher, venv manager & compiler
-├── launcher.bat                        # Unified Windows CLI launcher
+├── launcher.sh                         # Unified Linux CLI launcher delegating to dev.sh
+├── launcher.bat                        # Unified Windows CLI launcher delegating to dev.bat
 ├── app/
 │   ├── __init__.py                     # App package marker
 │   ├── core/
 │   │   ├── __init__.py                 # Core package marker
 │   │   ├── config.py                   # Global settings, paths, timeouts & PyInstaller resolution
-│   │   ├── database.py                 # SQLite schema, connection lifecycles, migrations & cURL storage
-│   │   ├── security.py                 # SSRF firewall, IP filtering, target normalization & hashing
-│   │   ├── auditor_headers.py          # CSP, HSTS, CORS, Clickjacking & Cookie hygiene engine
+│   │   ├── database.py                 # Dual-path SQLite WAL lakehouse schema, migrations & cURL storage
+│   │   ├── security.py                 # SSRF firewall, CWE-22/346, AES-256-GCM, Ed25519 & CMMC controls
+│   │   ├── auditor_headers.py          # Directive-aware CSP, HSTS, two-tier CORS, Clickjacking & Cookie engine
 │   │   ├── auditor_secrets.py          # Shannon entropy & high-confidence token/credential leak detector
 │   │   ├── auditor_api_routes.py       # OpenAPI/Swagger, GraphQL, Actuators & Git metadata probes
 │   │   ├── auditor_dom.py              # Client-side DOM XSS sinks & unvalidated postMessage audits
+│   │   ├── auditor_ast_context.py      # Contextual AST reflection analyzer (Module 3)
 │   │   ├── engine_bridge.py            # Resilient boundary-aware IPC adapter for Rust/Go binaries
+│   │   ├── feature_extractor.py        # App-scoped re-export of services/feature_extractor.py
 │   │   └── scanner.py                  # Master audit orchestrator, cURL generator & SSE log broadcaster
 │   ├── routes/
 │   │   ├── __init__.py                 # Routes package marker
-│   │   ├── home.py                     # HTML dashboard & favicon router (Starlette 0.36+ compatible)
-│   │   └── api.py                      # REST endpoints: scan trigger, SSE streaming, STIX/TAXII export
+│   │   ├── home.py                     # HTML dashboard, SYS.01 archive console & favicon router
+│   │   ├── archive_api.py              # App-scoped re-export of routes/archive_api.py
+│   │   └── api.py                      # REST endpoints: scan trigger, SSE streaming, SARIF/STIX/TAXII export
 │   ├── static/
 │   │   ├── CyberNestLabsLogo.png       # Web asset brand logo
 │   │   ├── brand.css                   # CyberNest Labs corporate header styles
-│   │   └── terminal.css                # Dark military-industrial cyberpunk theme & tables
+│   │   ├── synth-ledger.css            # Crimson-ledger UI stylesheet
+│   │   ├── terminal.css                # Dark military-industrial cyberpunk theme & tables
+│   │   ├── css/blackroute-synth.css    # Vendored loopback-sovereign SYS.01 stylesheet
+│   │   ├── fonts/JetBrainsMono.woff2   # Vendored loopback monospace font
+│   │   └── js/htmx.min.js              # Vendored loopback HTMX runtime
 │   └── templates/
-│       ├── layout.html                 # Jinja2 master HTML layout with HTMX loader
-│       └── index.html                  # Jinja2 dashboard with EventSource SSE & 1-click cURL PoC copy
+│       ├── layout.html                 # Jinja2 master HTML layout with vendored HTMX loader
+│       ├── index.html                  # Jinja2 dashboard with EventSource SSE & 1-click cURL PoC copy
+│       ├── archive_console.html        # Lakehouse & MassExport HTMX console
+│       └── partials/triage_queue.html  # Active learning human review queue partial
 ├── bin/
 │   ├── web_spider                      # [Compiled Rust binary] High-performance crawler/regex extractor
 │   └── surface_graph                   # [Compiled Go binary] Attack surface topology & tech fingerprinter
+├── data/
+│   └── blackroute_archive.db           # Dedicated SQLite WAL ML lakehouse database (runtime)
+├── db/
+│   └── init_db.sql                     # Canonical 4-table SQLite WAL lakehouse DDL
 ├── engines/
 │   ├── web_spider/
 │   │   ├── Cargo.toml                  # Rust package definition & compiler optimizations (LTO, strip)
 │   │   ├── Cargo.lock                  # Pinned offline crate dependencies
 │   │   └── src/
-│   │       └── main.rs                 # Rust source: Thompson NFA regex crawler & endpoint harvester
+│   │       └── main.rs                 # Rust source: Thompson NFA regex crawler, RegexSet & endpoint harvester
 │   └── surface_graph/
 │       ├── go.mod                      # Go module definition (Go 1.21+, zero external dependencies)
-│       └── main.go                     # Go source: concurrent topology tree & tech fingerprinter
+│       └── main.go                     # Go source: concurrent topology tree, fingerprinter & capped scorer
+├── reports/
+│   └── sarif/
+│       └── blackroute_historical_seed.sarif # Historical SARIF v2.1.0 seed for lakehouse backfill
+├── routes/
+│   ├── __init__.py                     # Top-level lakehouse routes package marker
+│   ├── archive_api.py                  # Zero-OOM MassExport streaming, teacher import & triage endpoints
+│   └── export.py                       # MassExport & MassImport route alias module
+├── scripts/
+│   ├── backfill_sarif_dir.py           # Historical SARIF/JSON lakehouse ingestion CLI
+│   ├── backup_and_sign.sh              # Atomic SQLite VACUUM INTO hot-backup & SHA-256 lock script
+│   ├── migrate_v2_archive.py           # v2 WAL lakehouse schema initializer & legacy migration CLI
+│   ├── sandbox_harness.sh              # Sandbox isolation verification harness
+│   └── sys_telemetry.sh                # Live POSIX WAL & loopback status telemetry emitter
+├── services/
+│   ├── __init__.py                     # Services package marker
+│   └── feature_extractor.py            # 32-feature differential extractor, SimHash, StealthCurlBuilder & async archiver
 ├── Sources/
 │   ├── __init__.py                     # Sources package marker
 │   └── Utilities/
 │       ├── __init__.py                 # Utilities package marker
-│       └── vids_pdf_gen.py             # CyberNest VIDS PDF Web Audit report generator (with cURL PoCs)
-├── Output/                             # Per-target isolated report artifacts (Output/Targ001 .. Output/Targ00N)
+│       └── vids_pdf_gen.py             # CyberNest VIDS PDF & Bug Bounty Markdown report generator
+├── web/
+│   ├── static/                         # Loopback-sovereign static asset mirror (css, fonts, js)
+│   └── templates/                      # Archive console & triage queue template mirror
+├── Output/
+│   └── .gitkeep                        # Per-target isolated report artifacts (Output/Targ001 .. Output/Targ00N)
 └── tests/
-    ├── test_audit.py                   # Unit tests (entropy, cURL generation, resilient IPC, sandbox confinement)
+    ├── test_audit.py                   # Unit & QA regression tests (CORS/CSP/cookies/CVSS/PDF/cURL/sandbox)
+    ├── test_enterprise_signatures.py   # Go engine Akamai/Adobe/Tealium signature verification
+    ├── test_lakehouse_archive.py       # Lakehouse schema, 100k zero-OOM stream & distillation loop tests
     └── test_pipeline_e2e.py            # End-to-end integration test (single & batch pipeline, isolated temp sandbox)
 ```
 
@@ -173,20 +213,23 @@ BlackRoute-Web-Linux_VersionPopOS/
 - **How to Modify**: Add new regex rules or tune `min_entropy` values to adjust sensitivity.
 
 #### `app/core/auditor_headers.py`
-- **Role**: HTTP response header, cookie security, and transport layer auditor.
+- **Role**: Directive-aware HTTP response header, context-aware cookie security, and two-tier CORS auditor.
 - **What It Does**:
   - `audit_response_headers(url, headers, status)`:
-    - Evaluates Content-Security-Policy (flags missing CSP, `'unsafe-inline'`, `'unsafe-eval'`, and wildcard origins).
+    - Parses `Content-Security-Policy` into a directive-to-token map (`dir_map` / `raw_dir_map`). Evaluates `'unsafe-inline'` and `'unsafe-eval'` strictly inside `script-src` (falling back to `default-src` if `script-src` is absent), suppresses `'unsafe-inline'` when a CSP Level 2/3 `'nonce-...'` or `'sha256-'`/`'sha384-'`/`'sha512-'` hash is present, ignores passive `img-src`/`style-src` for script execution checks, and emits the exact offending directive as evidence.
     - Evaluates Strict-Transport-Security (HSTS) on HTTPS, minimum `max-age` (recommended >= 31536000), and `includeSubDomains`.
     - Evaluates Anti-Clickjacking: `X-Frame-Options` and CSP `frame-ancestors`.
     - Evaluates MIME Sniffing: `X-Content-Type-Options: nosniff`.
-    - Evaluates Referrer and Permissions policies.
+    - Evaluates Referrer and Permissions policies (`INFO` severity for missing `Permissions-Policy`).
     - Detects server banners (`Server: Apache/2.4.41`, `X-Powered-By: PHP/7.4`).
-  - `audit_cookies(url, cookies_headers)`: Audits `Set-Cookie` directives for `Secure`, `HttpOnly`, `SameSite` compliance, and flags `SameSite=None` without `Secure`.
-    - **Vendor Cookie Exclusions**: Automatically downgrades WAF/analytics cookies (Akamai Bot Manager, Adobe Experience Cloud, Tealium, Google Analytics) to INFO severity for missing HttpOnly/Secure flags, as these are expected vendor behaviors.
+  - `audit_cookies(url, cookies_headers, is_authenticated=False)`: Audits `Set-Cookie` directives for `Secure`, `HttpOnly`, `SameSite` compliance, and flags `SameSite=None` without `Secure`.
+    - **Vendor & Telemetry Cookie Exclusions**: `VENDOR_COOKIE_EXCLUSIONS` classifies Akamai Bot Manager, Adobe Experience Cloud, Tealium, Google Analytics, GDPR/consent (`is_gdpr*`, `Optanon*`, `CookieConsent`), and first-party analytics/geo/client-hint cookies (`yandex_gid`, `yandexuid`, `yuidss`, `yp`, `_yasc`, `bh`, `*_gid`) as `INFO` vendor/telemetry notices.
+    - **Auth-Context Awareness**: `_AUTHENTICATED_SESSION_COOKIE_RE` checks for explicit session/auth/token indicators (`session`, `sid`, `auth`, `jwt`, `csrf`, `login`) instead of naive `id`/`uid` substrings. Missing `HttpOnly` is rated `HIGH` only when `is_authenticated=True` and the cookie matches an authenticated session indicator; unauthenticated `GET /` cookies are capped at `LOW`.
     - **Deduplication**: Prevents duplicate cookie findings from redirect chains using `seen_cookies` set tracking `(cookie_name.lower(), check_type)` tuples.
-  - `audit_cors(url, acao, acac, tested_origin)`: Flags wildcard origins with credentials (`Access-Control-Allow-Origin: *` + `Credentials: true`) and dynamic untrusted origin reflection.
-- **How to Modify**: Add checks inside `audit_response_headers()` returning standardized finding dictionaries. Extend `VENDOR_COOKIE_EXCLUSIONS` regex patterns for new vendor cookies.
+  - `audit_cors(url, acao, acac, tested_origin, is_authenticated=False)`: Flags wildcard origins with credentials (`Access-Control-Allow-Origin: *` + `Credentials: true` -> `CRITICAL`) and separates dynamic origin reflection into two tiers:
+    - **External Third-Party Origin Reflection** (e.g., `https://probe-<nonce>.example.invalid`): `HIGH` unauthenticated (`CRITICAL` only when `is_authenticated=True`) with credentials, or `MEDIUM` without credentials.
+    - **Same-Site Subdomain Reflection** (e.g., `https://probe-<nonce>.<host>`): `CORS Subdomain Origin Reflection`, rated `MEDIUM` with credentials or `LOW` without credentials.
+- **How to Modify**: Add checks inside `audit_response_headers()` returning standardized finding dictionaries with explicit `rule_id`. Extend `VENDOR_COOKIE_EXCLUSIONS` regex patterns for new vendor/consent cookies.
 
 #### `app/core/auditor_api_routes.py`
 - **Role**: Active non-destructive probe for exposed API schemas, actuators, and debug files with WAF circuit breaker.
@@ -223,21 +266,21 @@ BlackRoute-Web-Linux_VersionPopOS/
 #### `app/core/scanner.py`
 - **Role**: Master single-target and multi-target batch audit pipeline orchestrator, cURL PoC generator, HTML reproduction harness manager, isolated `Output/Targ00N` artifact generator, and real-time SSE broadcaster.
 - **What It Does**:
-  - `generate_curl_poc(finding)`: Synthesizes reproducible, functional `curl` commands for every finding using benign origins (`https://origin-verify.<domain>`), cookie checks, grep-filtered asset downloads, and GraphQL introspection requests.
+  - `generate_curl_poc(finding)`: Synthesizes reproducible, functional `curl` commands for every finding using `curl -s -D - -o /dev/null` for headers, cookies, and CORS (with `finding["tested_origin"]` or fallback `https://origin-verify.<domain>`), `curl -s | grep` for secrets/DOM hints, and `curl -s -X POST` for GraphQL introspection requests.
   - `generate_html_poc(finding)`: Manages HTML reproduction harnesses for DOM XSS and postMessage vulnerabilities, writing PoC files strictly inside `settings.STATIC_DIR` via `resolve_sandboxed_path()`.
   - `deduplicate_findings(findings)`: Removes duplicate findings based on `(category, title, endpoint)` tuples before persistence.
   - `broadcast_log(entry)`: Broadcasts real-time terminal log entries to all connected SSE subscriber queues (`LOG_SUBSCRIBERS`).
-  - `generate_target_output_artifacts(...)`: Writes isolated per-target deliverables (`blackroute_triage_scan_<scan_id>.md` and `BlackRoute_Web_Report_<timestamp>.pdf`) into `Output/Targ001`, `Output/Targ002`, ..., `Output/Targ00N` with strict path confinement.
+  - `generate_target_output_artifacts(...)`: Writes isolated per-target deliverables (`blackroute_triage_scan_<scan_id>.md` and `BlackRoute_Web_Report_<timestamp>.pdf`) into `Output/Targ001`, `Output/Targ002`, ..., `Output/Targ00N` with full diagnostic telemetry (`scan_profile`, `initial_http_status`, `scan_duration`, `engine_mode`, `crawl_notes`) and strict path confinement.
   - `run_batch_scan_pipeline(targets, ...)`: Sequentially orchestrates multi-target batch audits across validated `src_list` domains, isolating each target's state, temporary directory, SQLite record, and `Output/Targ{index:03d}` report folder while streaming unified progress and batch summary metrics over SSE.
   - `WebScanner.run_pipeline()`:
-    1. Validates target and SSRF boundaries. Injects `Settings.get_stealth_headers(self.engagement_id)` with Akamai cache bypass and staging tokens. Creates an isolated `0o700` temporary harvest directory (`blackroute_web_...`) with sandbox-verified deterministic file names (`index.html`, `page_<hash>.html`, `asset_<hash>.js`, `chunk_<hash>.js`).
-    2. Phase 1: Header, cookie, CORS (using benign origin test), and transport audit. Detects initial WAF response blocks.
-    3. Phase 2: Bounded BFS spidering of web assets and client routes via Rust `web_spider` (depth=2, strict target domain filter, capped at 25 HTML / 50 JS assets, <45s runtime). Harvests and analyzes Webpack dynamic chunks.
+    1. Validates target and SSRF boundaries. Injects `Settings.get_stealth_headers(self.engagement_id)` with Akamai cache bypass and staging tokens. Creates an isolated `0o700` temporary harvest directory (`br_web_...`) with sandbox-verified deterministic file names (`index.html`, `page_<hash>.html`, `asset_<hash>.js`, `chunk_<hash>.js`).
+    2. Phase 1: Header, context-aware cookie (`is_authenticated` tracking), two-tier CORS (probing external `https://probe-<nonce>.example.invalid` first, then same-site `https://probe-<nonce>.<host>`), and transport audit. Records `initial_http_status` and initial WAF challenge signals.
+    3. Phase 2: Bounded BFS spidering of web assets and client routes via Rust `web_spider` (depth=2, strict target domain filter, capped at 25 HTML / 50 JS assets, <45s runtime). Harvests Webpack dynamic chunks and records diagnostic `crawl_notes` and `spider_engine_mode`.
     4. Phase 3: Secret and credential leak detection with Shannon entropy evaluation.
     5. Phase 4: DOM XSS and postMessage risk analysis; synthesizes offline HTML PoC reproduction harnesses.
     6. Phase 5: API surface and sensitive path probing (conditionally executed based on `self.stealth_mode`; suppressed in Stealth Mode to protect client SOC telemetry). Active verification verifies GraphQL introspection and accessible login endpoints.
-    7. Phase 6: Attack surface topology and stack fingerprinting via Go `surface_graph` with normalized composite scoring.
-    8. Phase 7: Deduplicates findings, generates cURL PoCs and HTML harnesses, saves scan to SQLite, compiles VIDS PDF report, populates `Output/Targ001/` (for single-target scans) or `Output/Targ00N/` (for batch scans), and broadcasts dynamic results grid with `[COPY cURL PoC]`, `[COPY HTML PoC]`, and `[DOWNLOAD BATCH ZIP]` buttons.
+    7. Phase 6: Attack surface topology and stack fingerprinting via Go `surface_graph` with category-capped diminishing-returns scoring and `graph_engine_mode` tracking.
+    8. Phase 7: Deduplicates findings, generates cURL PoCs and HTML harnesses, computes `scan_duration_s`, saves scan to SQLite, compiles VIDS PDF report, populates `Output/Targ001/` (for single-target scans) or `Output/Targ00N/` (for batch scans), and broadcasts dynamic results grid with `[COPY cURL PoC]`, `[COPY HTML PoC]`, and `[DOWNLOAD BATCH ZIP]` buttons.
     9. Zero-Footprint Protocol: Removes temporary asset directories upon completion.
 - **How to Modify**: Add new scan phases or adjust confidence suppression thresholds.
 
@@ -265,7 +308,7 @@ BlackRoute-Web-Linux_VersionPopOS/
   - Normalizes route paths, decomposes segments, and builds parent-child topology edges.
   - **Vendor Route Segregation**: Filters out third-party vendor tracking/telemetry scripts (`akamai`, `tiqcdn`, `tealium`, `adobe`, `demdex`, `google-analytics`) so third-party URLs are not misidentified as first-party sensitive administrative routes.
   - **Enterprise Technology Fingerprinting**: Detects Next.js, React, Vue, Angular, Apache, Nginx, Cloudflare, Akamai Bot Manager (`_abck`, `bm_sz`, `akamai_session`), Adobe Experience Cloud (`mbox`, `amcv`), and Tealium iQ (`utag.sync`, `utag.js`).
-  - **Normalized Composite Threat Scoring**: Refactored scoring formula that caps third-party vendor and `INFO` items to a maximum contribution of +2 points (preventing the 95–100 score inflation bug), while appropriately weighting first-party CRITICAL (+25) and HIGH (+15) vulnerabilities.
+  - **Category-Capped Composite Threat Scoring (`calculateRiskScore()`)**: Caps third-party vendor and `INFO` items to a maximum contribution of +2 points, applies intra-category diminishing returns (`100% -> 50% -> 25%`) and per-category caps (`COOKIES` max +15, `HEADERS` max +15, active categories max +60), and enforces a `<= 40/100` passive hygiene ceiling when no active/critical vulnerabilities or sensitive routes exist.
   - Outputs structured JSON conforming to `engine_bridge.py`.
 - **How to Modify**: Add new technology signatures in `fingerprintTechnologies()` or adjust scoring weights in `calculateRiskScore()` in `main.go`. Recompile via `./launcher.sh build_engines`.
 
@@ -307,10 +350,10 @@ BlackRoute-Web-Linux_VersionPopOS/
 #### `Sources/Utilities/vids_pdf_gen.py`
 - **Role**: CyberNest VIDS (Vulnerability Identification & Defense Specification) PDF & Bug Bounty Markdown report formatting engine.
 - **What It Does**:
-  - `STEALTH_CURL_HEADERS_BLOCK` & `ensure_stealth_curl_poc(curl_cmd, endpoint)`: Guarantees every generated or persisted `curl` command embeds the complete L7 client hint and modern Chrome 124 browser persona headers (`User-Agent`, `Sec-Ch-Ua`, `Sec-Ch-Ua-Mobile`, `Sec-Ch-Ua-Platform`, `Accept`, `Accept-Language`) so security engineers and bug bounty triagers never trigger edge WAF `403 Forbidden` blocks during reproduction.
-  - `classify_bug_bounty_metadata(finding, default_target)`: Deterministically maps every finding category and vulnerability type to its exact CWE classification (`CWE-693`, `CWE-1021`, `CWE-319`, `CWE-942`, `CWE-614`, `CWE-1004`, `CWE-1275`, `CWE-798`, `CWE-79`, `CWE-346`, `CWE-200`, `CWE-538`), CVSS v3.1 Base Vector & Score (`CVSS:3.1/...`), and a numbered 3-step reproduction guide.
-  - `build_chained_impact_statement(target_url, actionable_findings, risk_score)`: Synthesizes an **Executive Summary & Chained Triage Impact Statement** explaining how discovered vulnerabilities chain together across the target origin.
-  - `build_bug_bounty_markdown_triage(scan, findings, endpoints)` & `generate_web_report(data, output_dir)`: Generates standardized Bug Bounty Submission Markdown (`.md`) and VIDS PDF (`.pdf`) reports containing Executive Summaries, Chained Triage Impact Statements, CWE/CVSS v3.1 vectors, Step-by-Step Reproduction Guides, Actionable Remediation Guidance, and Stealth Browser Persona cURL PoCs.
+  - `STEALTH_CURL_HEADERS_BLOCK` & `ensure_stealth_curl_poc(curl_cmd, endpoint)`: Guarantees every generated or persisted `curl` command embeds the complete L7 client hint and modern Chrome 124 browser persona headers (`User-Agent`, `Sec-Ch-Ua`, `Sec-Ch-Ua-Mobile`, `Sec-Ch-Ua-Platform`, `Accept`, `Accept-Language`) and uses clean header-only GET diagnostics (`curl -s -D - -o /dev/null`) rather than HEAD (`-I`) or full-body `-i` dumps.
+  - `severity_from_cvss_score()` & `classify_bug_bounty_metadata(finding, default_target)`: Deterministically maps every finding category and vulnerability type to its exact CWE classification (`CWE-693`, `CWE-1021`, `CWE-319`, `CWE-942`, `CWE-614`, `CWE-1004`, `CWE-1275`, `CWE-798`, `CWE-79`, `CWE-346`, `CWE-200`, `CWE-538`), a CVSS v3.1 Base Vector & Score strictly calibrated to the finding's runtime severity (`9.0–10.0` Critical, `7.0–8.9` High, `4.0–6.9` Medium, `0.1–3.9` Low, `0.0` Info), and a numbered 3-step reproduction guide using word/token-boundary evidence truncation (`truncate_clean()`).
+  - `build_chained_impact_statement(target_url, actionable_findings, risk_score)`: Synthesizes an **Executive Summary & Chained Triage Impact Statement** strictly gated on observed finding rule IDs (`BR-CSP-*`, `BR-DOM-*`, `BR-COOKIE-*`, `BR-CORS-*`, `BR-API-*`, `BR-HEADER-*`, `BR-SECRET-*`), preventing boilerplate claims about absent vulnerability classes.
+  - `build_bug_bounty_markdown_triage(scan, findings, endpoints)` & `generate_web_report(data, output_dir)`: Generates unified Bug Bounty Submission Markdown (`.md`) and VIDS PDF (`.pdf`) reports with schema parity (`Scan Completed`, `Scan Profile`, `Initial HTTP Status`, `Scan Duration`, `Engine Mode`, `Pages Crawled`, `Endpoints Discovered`, `Crawl Notes`, `Confidence`, `Informational Notices`), excludes `INFO` findings from actionable counts, wraps PDF finding blocks in `fpdf2` `with pdf.unbreakable():` with soft token wrapping to prevent orphaned lines or margin bleed, and always renders Section B (`None detected.` when 0 vendor observations).
 
 ---
 
@@ -458,18 +501,25 @@ BlackRoute-Web implements a comprehensive, 6-pillar stealth defense architecture
   ```
   This matches standard browser traffic profiles and prevents automated bot-classification by Cloudflare Bot Management or Akamai Bot Manager.
 
-### 5.2 Randomized Dynamic CORS Origin Probing
-- **The Problem**: Probing cross-origin reflection with `Origin: https://evil.cybernest.labs` immediately trips SIEM detection rules looking for keywords like `evil`, `attacker`, or unauthorized TLDs. Conversely, static origin checks risk false positives if a server has an unverified, static test rule configured.
-- **Implementation**: In `scanner.py`, origin reflection is actively tested using an ephemeral, dynamically randomized subdomain probe with a cryptographic nonce matching the target's root domain:
+### 5.2 Two-Tier Randomized Dynamic CORS Origin Probing
+- **The Problem**: Probing cross-origin reflection with `Origin: https://evil.cybernest.labs` immediately trips SIEM detection rules looking for keywords like `evil`, `attacker`, or unauthorized TLDs. Additionally, testing only a same-site subdomain (`https://probe-<nonce>.<host>`) conflates intentional first-party subdomain trust with arbitrary cross-site origin reflection.
+- **Implementation**: In `scanner.py`, Phase 1 executes a two-tier origin reflection check using a cryptographic nonce:
+  1. **Tier 1 (External Third-Party Origin)**: Sends `Origin: https://probe-{nonce}.example.invalid`. Reflection with `Access-Control-Allow-Credentials: true` is rated `HIGH` unauthenticated (`CRITICAL` only when `is_authenticated=True`), or `MEDIUM` without credentials.
+  2. **Tier 2 (Same-Site Subdomain Origin)**: If Tier 1 does not reflect, probes `Origin: https://probe-{nonce}.{parsed_host}`. Reflection is classified separately as **`CORS Subdomain Origin Reflection`** (`MEDIUM` with credentials, `LOW` without credentials).
   ```python
   parsed_host = urllib.parse.urlparse(validated_url).netloc
   probe_nonce = secrets.token_hex(4)
-  benign_origin = f"https://probe-{probe_nonce}.{parsed_host}"
-  cors_resp = await client.get(validated_url, headers={"Origin": benign_origin})
+  external_origin = f"https://probe-{probe_nonce}.example.invalid"
+  cors_ext_resp = await client.get(validated_url, headers={"Origin": external_origin})
+  # Fallback to Tier 2 same-site subdomain probe if external origin is not reflected
+  subdomain_origin = f"https://probe-{probe_nonce}.{parsed_host}"
   ```
-  This proves the backend dynamically reflects untrusted incoming origins in real time rather than matching a static whitelist. The resulting cURL PoC is generated with the exact tested origin for authentic reproducibility:
+  The resulting cURL PoC uses the exact tested origin (falling back to `https://origin-verify.<domain>` only when `tested_origin` is absent in static callers) with header-only output (`-D - -o /dev/null`):
   ```bash
-  curl -s -i "https://target.domain/api" -H "Origin: https://probe-a1b2c3d4.target.domain"
+  curl -s -D - -o /dev/null "https://target.domain/api" \
+    -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+    ... \
+    -H "Origin: https://probe-a1b2c3d4.example.invalid"
   ```
 
 ### 5.3 Semaphore Concurrency & Randomized Jitter Pacing
@@ -603,21 +653,19 @@ With noise filtering and deduplication active, the actual attack surface is now 
   - `X-Akamai-Edge-Token: <token>`
 - **Safety**: Headers are only activated when an engagement ID is explicitly provided, ensuring default scans maintain a clean stealth profile.
 
-### 6.10 Surface Risk Score Normalization Formula
-**Problem**: Pure `INFO` observations and third-party vendor integrations (Akamai bot protection cookies, Adobe Experience Cloud tags, Tealium iQ scripts) were previously contributing linear risk points, artificially saturating aggregate Surface Risk Scores at 95–100 even on highly secure applications.
+### 6.10 Surface Risk Score Normalization & Category-Capped Formula
+**Problem**: Pure `INFO` observations, third-party vendor integrations, and repeated passive header/cookie hygiene findings on unauthenticated landing pages previously compounded linearly, saturating aggregate Surface Risk Scores at 100/100 and obscuring genuine high-impact vulnerabilities.
 
-**Solution**:
-- **Vendor Route Exclusion**: Excluded known vendor telemetry patterns (`akamai`, `tiqcdn`, `tealium`, `adobe`, `demdex`, `google-analytics`) from being classified as first-party sensitive administrative routes.
-- **Bounded Vendor/INFO Contribution**: In both `engines/surface_graph/main.go` and `app/core/engine_bridge.py`, pure `INFO` items and vendor integration findings are capped at a maximum composite impact of +2 points.
-- **Calibrated Severity Weighting**: Risk score calculation now prioritizes genuine exploitable vulnerabilities:
-  - Base Score: +10
-  - Sensitive Routes: +3 per unique route (capped at +15)
-  - Critical Severity Findings: +25 each
-  - High Severity Findings: +15 each
-  - Medium Severity Findings: +8 each
-  - Low Severity Findings: +3 each
-  - Vendor / INFO Noise: Bounded to max +2
-- **Result**: Eliminates score saturation and accurately portrays true security risk.
+**Solution (`engines/surface_graph/main.go`, `app/core/engine_bridge.py`, `Sources/Utilities/vids_pdf_gen.py`)**:
+- **Vendor Route & INFO Exclusion**: Excluded known vendor telemetry patterns (`akamai`, `tiqcdn`, `tealium`, `adobe`, `demdex`, `google-analytics`) from first-party sensitive routes, capped `INFO`/vendor noise at a maximum composite impact of +2 points, and excluded `INFO` findings from "Actionable Vulnerabilities" counts in both Markdown and PDF reports.
+- **Intra-Category Diminishing Returns**: Within each finding category, raw severity weights (`CRITICAL`: +25, `HIGH`: +15, `MEDIUM`: +6, `LOW`: +2) are sorted descending and attenuated by index (`100%` for 1st, `50%` for 2nd, `25%` for 3rd+, minimum +1).
+- **Per-Category Caps & Passive Ceiling**:
+  - Base Score: +10 (+3 per unique sensitive route up to +15; +5/+10 endpoint complexity)
+  - `COOKIES`: capped at **+15** (hygiene)
+  - `HEADERS`: capped at **+15** (hygiene; raised only when `CRITICAL` findings exist in the category)
+  - Active Exploitation Categories (`SECRETS`, `DOM_XSS`, `API_EXPOSURE`, `SQLI`, `SSRF`, `GENERAL`): capped at **+60** each
+  - **Passive Hygiene Ceiling**: When 0 `CRITICAL` findings, 0 active-category findings, and 0 sensitive routes are present, the composite score is clamped at **<= 40/100**.
+- **Result**: Eliminates score saturation from passive header/cookie hygiene findings while preserving full headroom (`41–100`) for verified secrets, DOM XSS, exposed APIs, and critical misconfigurations.
 
 ### 6.11 Multi-Target Batch Scanning & Isolated Output Architecture (`Output/Targ00N`)
 **Problem**: Security engineers conducting multi-domain client engagements needed a way to ingest a list of target domains (`src_list`) via CSV upload or inline comma-separated input, audit each target sequentially without cross-target state pollution, and export neatly segregated per-target report packages.
@@ -667,19 +715,19 @@ With noise filtering and deduplication active, the actual attack surface is now 
    - Isolated `settings.DB_PATH`, `settings.OUTPUT_DIR`, and `settings.STATIC_DIR` inside `tempfile.TemporaryDirectory` in `tests/test_audit.py` and `tests/test_pipeline_e2e.py` so running test suites never pollutes production `blackroute_web.db` or `Output/Targ*`.
 
 ### 6.13 Standardized Bug Bounty Report Formatting Engine & Stealth cURL PoC Synthesis
-**Problem**: Standard automated scanner exports often lack the structured fields required by professional bug bounty platforms (HackerOne, Bugcrowd, Intigriti) and enterprise triage teams, and bare `curl -s -I` commands in PoC blocks are frequently blocked with `403 Forbidden` by edge WAFs (Akamai Bot Manager, Cloudflare) due to missing L7 browser client hints.
+**Problem**: Standard automated scanner exports often lacked schema parity between Markdown and PDF outputs, emitted static CVSS scores that contradicted runtime severities, hallucinated absent vulnerability classes in chained impact statements, and used `curl -s -I` (HEAD) or `curl -s -i` (noisy HTML stdout) commands in PoC blocks.
 
 **Solution (`Sources/Utilities/vids_pdf_gen.py`, `app/core/scanner.py`, `app/routes/api.py`)**:
-1. **Standardized Bug Bounty Report Structure (`.md` & `.pdf`)**:
-   - Both `build_bug_bounty_markdown_triage()` (used by `/api/export/markdown`, `/api/scans/{scan_id}/export/markdown`, and `Output/Targ00N/blackroute_triage_scan_<id>.md`) and `generate_web_report()` (used for `BlackRoute_Web_Report_<timestamp>.pdf`) now output a unified bug bounty submission structure:
-     - **Executive Summary & Chained Triage Impact Statement** (`build_chained_impact_statement()`): Synthesizes multi-finding attack chains across CSP, cookie security flags, DOM sinks, CORS, API exposure, and credential leaks.
-     - **Precise CWE Classifications & CVSS v3.1 Base Vectors** (`classify_bug_bounty_metadata()`): Maps every finding to its exact CWE identifier (e.g., `CWE-693`, `CWE-1021`, `CWE-614`, `CWE-1004`, `CWE-798`, `CWE-79`, `CWE-346`, `CWE-942`) and calibrated CVSS v3.1 Base Vector string (`CVSS:3.1/AV:N/...`) and base score.
-     - **Step-by-Step Reproduction Guides**: Provides numbered verification steps tailored to the target endpoint and evidence indicator.
-     - **Actionable Remediation Guidance**: Provides concrete engineering remediation instructions alongsideSection B vendor telemetry segregation.
-2. **Stealth Browser Persona cURL PoCs (`generate_curl_poc()` & `ensure_stealth_curl_poc()`)**:
-   - Every generated and exported `curl` PoC command automatically embeds the verified Chrome 124 on Linux stealth browser persona and L7 Client Hints (`STEALTH_CURL_HEADERS_BLOCK`) before any pipe or post-processing filter:
+1. **Unified Bug Bounty Report Structure & Schema Parity (`.md` & `.pdf`)**:
+   - Both `build_bug_bounty_markdown_triage()` (used by `/api/export/markdown`, `/api/scans/{scan_id}/export/markdown`, and `Output/Targ00N/blackroute_triage_scan_<id>.md`) and `generate_web_report()` (used for `BlackRoute_Web_Report_<timestamp>.pdf`) emit matching metadata and telemetry:
+     - **Diagnostic Telemetry**: `Target URL`, `Scan Completed`, `Scan Profile` (`stealth_mode`/`shadow_mode`/`local_staging`), `Initial HTTP Status`, `Scan Duration`, `Engine Mode` (`NATIVE_RUST`/`NATIVE_GO` vs. `PYTHON_FALLBACK`), `Pages Crawled`, `Endpoints Discovered`, `Crawl Notes` (why 0 endpoints occurred), `Informational Notices`, `Confidence`, and always-rendered **Section B: Third-Party & Vendor Observations** (`None detected.` when empty).
+     - **Rule-ID-Gated Chained Impact Statement** (`build_chained_impact_statement()`): Gates every impact clause strictly on observed finding `rule_id`s (`BR-CSP-*`, `BR-DOM-*`, `BR-COOKIE-*`, `BR-CORS-*`, `BR-API-*`, `BR-HEADER-*`, `BR-SECRET-*`), eliminating boilerplate assertions about absent DOM sinks, SSL-stripping, GraphQL, or Clickjacking.
+     - **Strict CVSS v3.1-to-Severity Alignment** (`classify_bug_bounty_metadata()` & `severity_from_cvss_score()`): Ensures every finding's CVSS v3.1 base score falls strictly within its runtime severity band (`9.0–10.0` Critical, `7.0–8.9` High, `4.0–6.9` Medium, `0.1–3.9` Low, `0.0` Info).
+     - **Clean Formatting & Pagination Hardening**: Uses token-boundary truncation (`truncate_clean()`), removes duplicate `- **Remediation**:` lines in Markdown, wraps PDF finding blocks in `fpdf2` `with pdf.unbreakable():` to prevent orphaned page breaks, and applies soft token wrapping in `sanitize()` to prevent long cookie/URL strings from overflowing columns.
+2. **Stealth Browser Persona GET-Header cURL PoCs (`generate_curl_poc()` & `ensure_stealth_curl_poc()`)**:
+   - Header, cookie, and CORS PoCs use `curl -s -D - -o /dev/null` with the verified Chrome 124 on Linux stealth browser persona and L7 Client Hints (`STEALTH_CURL_HEADERS_BLOCK`) so servers return true `GET` response headers (including `Set-Cookie` and CORS headers) without dumping HTML bodies to stdout:
      ```bash
-     curl -s -I "https://<target-domain>/" \
+     curl -s -D - -o /dev/null "https://<target-domain>/" \
        -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
        -H "Sec-Ch-Ua: \"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\", \"Not-A.Brand\";v=\"99\"" \
        -H "Sec-Ch-Ua-Mobile: ?0" \
@@ -687,7 +735,20 @@ With noise filtering and deduplication active, the actual attack surface is now 
        -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8" \
        -H "Accept-Language: en-US,en;q=0.5"
      ```
-   - `ensure_stealth_curl_poc()` also upgrades any historical or pre-persisted `curl_command` strings on-the-fly during Markdown and PDF report compilation.
+   - `ensure_stealth_curl_poc()` automatically upgrades any legacy `-s -I` or non-POST `-s -i` commands to `-s -D - -o /dev/null` during report compilation. Body-grep PoCs (`SECRETS`, `DOM_XSS`) use `curl -s ... | grep`, while ML lakehouse cold storage uses `StealthCurlBuilder` (§8.2).
+
+### 6.14 Internal QA Review & Remediation Audit (P0 / P1 / P2)
+- **P0 — Signal Accuracy & Calibration**:
+  - Implemented Two-Tier CORS probing and classification (`app/core/scanner.py`, `app/core/auditor_headers.py`) separating external origin reflection (`https://probe-<nonce>.example.invalid`) from same-site subdomain trust (`CORS Subdomain Origin Reflection`).
+  - Replaced raw CSP substring matching with a directive-aware parser (`script-src` / `default-src`), CSP Level 2/3 `'nonce-...'` / `'sha256-...'` suppression, and exact directive evidence (`app/core/auditor_headers.py`).
+  - Replaced naive `id`/`uid` cookie substring matching with auth-context awareness (`is_authenticated`) and expanded `VENDOR_COOKIE_EXCLUSIONS` for GDPR consent, analytics, geo, and client-hint cookies (`app/core/auditor_headers.py`).
+  - Calibrated CVSS v3.1 base vectors/scores to runtime severities (`0.0` for `INFO`) and gated `build_chained_impact_statement()` strictly on observed `rule_id`s (`Sources/Utilities/vids_pdf_gen.py`).
+- **P1 — Scoring, PoCs & Report Rendering**:
+  - Replaced linear risk score accumulation with category-capped diminishing-returns scoring (`COOKIES` max +15, `HEADERS` max +15, `<= 40/100` passive ceiling) in `engines/surface_graph/main.go` and `app/core/engine_bridge.py`, and excluded `INFO` from actionable counts.
+  - Switched header/cookie/CORS cURL PoCs to `curl -s -D - -o /dev/null`, removed duplicate Markdown remediation bullets, implemented `truncate_clean()`, and added `fpdf2` `unbreakable()` + soft token wrapping.
+- **P2 — Telemetry, Regression Tests & Documentation Sync**:
+  - Added `scan_profile`, `initial_http_status`, `scan_duration`, `engine_mode`, `crawl_notes`, `Confidence`, and always-rendered Section B across `.md` and `.pdf` reports (`app/core/scanner.py`, `app/core/engine_bridge.py`, `Sources/Utilities/vids_pdf_gen.py`).
+  - Added `test_qa_remediation_regression_suite` in `tests/test_audit.py` and reconciled `Handoff.md` (§1, §2, §5.2, §6.10, §6.13, §8.2).
 
 ---
 
@@ -756,7 +817,7 @@ docker-compose logs -f
 - **`BaselineProfiler`**: Sends 3 benign requests (root path + 2 random non-existent paths `/br_check_<hex>`) or derives static baseline telemetry to compute `baseline_latency_mean_ms`, `baseline_latency_std_ms`, `baseline_404_length`, 64-bit DOM Tag SimHash (`compute_dom_tag_simhash()`), and WAF vendor detection (`CLOUDFLARE`, `AKAMAI`, `AWS_WAF`, `IMPERVA`, `NONE`).
 - **`ReflectionAnalyzer`**: State-machine context parser inspecting the surrounding 64 bytes of reflected payloads to classify `reflection_context_id` (`0=None`, `1=HTML_Body`, `2=HTML_Attr_Quoted`, `3=HTML_Attr_Unquoted`, `4=Script_Tag`, `5=Comment`, `6=JSON_Val`, `7=Header`) and `special_chars_preserved_ratio` across `('<', '>', '"', "'", '(', ')', ';', '$', '`')`.
 - **`SignatureMatcher` & Rust `RegexSet` Engine**: Pre-compiled regex signature bank in Python (`SignatureMatcher.match_all()`) and Thompson NFA `RegexSet` in Rust (`match_heuristic_signatures()` in `engines/web_spider/src/main.rs`) evaluating the 5 deterministic bitmask flags plus login redirect detection and inline student false-flag probability scoring.
-- **`StealthCurlBuilder`**: Synthesizes bug-bounty reproduction `curl` commands with randomized User-Agent rotation, L7 Client Hints, `--compressed`, `--path-as-is`, `--insecure`, and `--retry 2 --retry-delay 1`.
+- **`StealthCurlBuilder`**: Lakehouse cold-storage cURL synthesizer (`services/feature_extractor.py`) used for archived ML replay datasets (`findings_evidence_cold.stealth_curl_command`), adding randomized User-Agent rotation, L7 Client Hints, `--compressed`, `--path-as-is`, `--insecure`, and `--retry 2 --retry-delay 1` (distinct from report/triage PoCs in §6.13 which use `curl -s -D - -o /dev/null` with the fixed Chrome 124 Linux persona).
 - **`AsyncSQLiteArchiver`**: Thread-safe ring buffer flushing findings in batches of 250 every 1.0 second via `executemany()` inside a single `BEGIN IMMEDIATE` transaction.
 
 ### 8.3 Phase 3: Zero-OOM Streaming MassExport & Teacher Batch Ingestion (`routes/archive_api.py`, `routes/export.py`)

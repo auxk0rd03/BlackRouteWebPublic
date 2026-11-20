@@ -212,11 +212,14 @@ def run_spider_extractor(target_path: str, depth: int = 2, target_domain: str = 
         result = _run_engine(engine, args, timeout=45)
         # Schema validation
         if result is not None and "endpoints" in result and isinstance(result["endpoints"], list):
+            result["engine_mode"] = "NATIVE_RUST"
             return result
         logger.info("web_spider engine unavailable or schema mismatch; falling back to Python.")
 
     # Python Fallback
-    return _python_fallback_spider(safe_path, depth=depth, target_domain=target_domain)
+    fallback_res = _python_fallback_spider(safe_path, depth=depth, target_domain=target_domain)
+    fallback_res["engine_mode"] = "PYTHON_FALLBACK"
+    return fallback_res
 
 def _is_allowed_domain(url: str, target_domain: str) -> bool:
     if not target_domain:
@@ -367,7 +370,8 @@ def _python_fallback_spider(path: str, depth: int = 2, target_domain: str = "") 
         "endpoints": list(unique_endpoints),
         "links": list(set(links)),
         "scripts": list(set(scripts)),
-        "forms": forms
+        "forms": forms,
+        "engine_mode": "PYTHON_FALLBACK",
     }
 
 
@@ -453,12 +457,15 @@ def run_surface_graph(
             
             # Schema validation
             if parsed is not None and isinstance(parsed, dict) and ("nodes" in parsed or "total_routes" in parsed):
+                parsed["engine_mode"] = "NATIVE_GO"
                 return parsed
             logger.info("surface_graph engine output failed schema check; falling back to Python.")
         except Exception as exc:
             logger.warning("surface_graph engine execution failed, falling back to Python: %s", exc)
 
-    return _python_fallback_surface_graph(endpoints, headers, content, findings=findings)
+    fallback_graph = _python_fallback_surface_graph(endpoints, headers, content, findings=findings)
+    fallback_graph["engine_mode"] = "PYTHON_FALLBACK"
+    return fallback_graph
 
 def _is_vendor_endpoint(ep: str) -> bool:
     ep_lower = ep.lower()
@@ -542,7 +549,7 @@ def _python_fallback_surface_graph(
     if any(sig in c_lower for sig in ["utag.sync", "utag.js", "tealium"]):
         techs.append({"name": "Tealium iQ", "category": "Tag Management", "evidence": "Tealium iQ Tag Management detected"})
 
-    # Normalized Risk Score Calculation
+    # Category-capped & diminishing-returns Risk Score Calculation
     risk_score = 10
     dedup_sensitive = list(set(sensitive_routes))
     if dedup_sensitive:
@@ -554,10 +561,11 @@ def _python_fallback_surface_graph(
         risk_score += 5
 
     if findings:
+        severity_weights = {"CRITICAL": 25, "HIGH": 15, "MEDIUM": 6, "LOW": 2}
+        category_caps = {"COOKIES": 15, "HEADERS": 15}
+        cat_weights: Dict[str, List[int]] = {}
+        cat_crits: Dict[str, int] = {}
         crit_count = 0
-        high_count = 0
-        med_count = 0
-        low_count = 0
         vendor_info_count = 0
 
         for f in findings:
@@ -567,23 +575,61 @@ def _python_fallback_surface_graph(
                 or str(f.get("title", "")).lower().startswith("[third-party]")
                 or any(t in ("third_party", "vendor_integration", "vendor_script") for t in tags)
             )
-            sev = str(f.get("severity", "INFO")).upper()
+            sev = str(f.get("severity", "INFO")).upper().strip()
             if is_vendor or sev == "INFO":
                 vendor_info_count += 1
-            elif sev == "CRITICAL":
+                continue
+            if sev not in severity_weights:
+                continue
+            cat = str(f.get("category", "")).upper().strip()
+            if not cat:
+                t_low = str(f.get("title", "")).lower()
+                if "cookie" in t_low:
+                    cat = "COOKIES"
+                elif any(k in t_low for k in ("csp", "cors", "hsts", "referrer", "permissions", "frame", "nosniff", "server", "powered")):
+                    cat = "HEADERS"
+                elif any(k in t_low for k in ("secret", "key", "token")):
+                    cat = "SECRETS"
+                elif any(k in t_low for k in ("dom", "xss", "postmessage")):
+                    cat = "DOM_XSS"
+                elif any(k in t_low for k in ("graphql", "swagger", "openapi", "actuator", ".git", ".env")):
+                    cat = "API_EXPOSURE"
+                else:
+                    cat = "GENERAL"
+            if sev == "CRITICAL":
                 crit_count += 1
-            elif sev == "HIGH":
-                high_count += 1
-            elif sev == "MEDIUM":
-                med_count += 1
-            elif sev == "LOW":
-                low_count += 1
+                cat_crits[cat] = cat_crits.get(cat, 0) + 1
+            cat_weights.setdefault(cat, []).append(severity_weights[sev])
 
-        finding_impact = (crit_count * 25) + (high_count * 15) + (med_count * 5) + (low_count * 2)
+        total_category_impact = 0
+        active_cat_impact = 0
+        for cat, weights in cat_weights.items():
+            weights.sort(reverse=True)
+            cat_sum = 0
+            for idx, w in enumerate(weights):
+                if idx == 0:
+                    contrib = w
+                elif idx == 1:
+                    contrib = max(1, w // 2)
+                else:
+                    contrib = max(1, w // 4)
+                cat_sum += contrib
+            cap_val = category_caps.get(cat, 60)
+            if cat in category_caps and cat_crits.get(cat, 0) > 0:
+                cap_val = min(60, max(cap_val, cat_crits[cat] * 25))
+            cat_sum = min(cap_val, cat_sum)
+            total_category_impact += cat_sum
+            if cat not in ("COOKIES", "HEADERS"):
+                active_cat_impact += cat_sum
+
         vendor_impact = 1 if 0 < vendor_info_count < 5 else (2 if vendor_info_count >= 5 else 0)
-        composite = (risk_score // 2) + finding_impact + vendor_impact
+        composite = (risk_score // 2) + total_category_impact + vendor_impact
         if composite > risk_score:
             risk_score = composite
+
+        has_active_or_critical = (crit_count > 0) or (active_cat_impact > 0)
+        if not has_active_or_critical and len(dedup_sensitive) == 0 and risk_score > 40:
+            risk_score = 40
 
     risk_score = min(100, max(0, risk_score))
 
@@ -594,5 +640,6 @@ def _python_fallback_surface_graph(
         "technologies": techs,
         "sensitive_routes": list(set(sensitive_routes)),
         "external_domains": list(ext_domains),
-        "risk_score": risk_score
+        "risk_score": risk_score,
+        "engine_mode": "PYTHON_FALLBACK",
     }

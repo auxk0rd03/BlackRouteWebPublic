@@ -276,7 +276,10 @@ fn main() {
     }
 
     if args.len() >= 6 && args[1] == "oob" {
-        println!("{}", emit_oob_kpi_fragment(&args[2], &args[3], &args[4], &args[5]));
+        println!(
+            "{}",
+            emit_oob_kpi_fragment(&args[2], &args[3], &args[4], &args[5])
+        );
         return;
     }
 

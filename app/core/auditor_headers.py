@@ -3,7 +3,7 @@ import re
 import urllib.parse
 import httpx
 
-# Vendor WAF / analytics cookies that must remain JS-readable for telemetry.
+# Vendor WAF / analytics / consent cookies that must remain JS-readable for telemetry.
 # Missing HttpOnly on these is expected, not a first-party session defect.
 VENDOR_COOKIE_EXCLUSIONS = {
     "Akamai Bot Manager": re.compile(
@@ -15,8 +15,24 @@ VENDOR_COOKIE_EXCLUSIONS = {
         re.IGNORECASE,
     ),
     "Tealium": re.compile(r"^utag_main$", re.IGNORECASE),
-    "Google Analytics": re.compile(r"^(?:_ga(?:_[A-Za-z0-9]+)?|_gid|_gcl_au)$", re.IGNORECASE),
+    "Google Analytics": re.compile(r"^(?:_ga(?:_[A-Za-z0-9]+)?|_gid|_gcl_au|__utm[a-z])$", re.IGNORECASE),
+    "GDPR & Consent Management": re.compile(
+        r"^(?:is_gdpr|is_gdpr_b|euconsent(?:-v2)?|OptanonConsent|OptanonAlertBoxClosed|CookieConsent|cookieyes-consent|cmplz_.*)$",
+        re.IGNORECASE,
+    ),
+    "First-Party Analytics / Geo / Client Hints": re.compile(
+        r"^(?:yandex_gid|yandexuid|yuidss|yp|_yasc|bh|_ym_uid|_ym_d|_ym_isad|_fbp|_fbc|_clck|_clsk|.*_gid)$",
+        re.IGNORECASE,
+    ),
 }
+
+# Authenticated session/token cookie indicator patterns (avoids naive 'id'/'uid' substring matches)
+_AUTHENTICATED_SESSION_COOKIE_RE = re.compile(
+    r"(?:^|[_\-\.])(?:sess(?:ion)?(?:_?id)?|sid|phpsessid|jsessionid|aspsessionid|connect\.sid|"
+    r"auth(?:_?token)?|jwt|access_?token|refresh_?token|id_?token|csrf(?:_?token)?|xsrf(?:_?token)?|login)(?:$|[_\-\.])|"
+    r"^(?:sessionid|authtoken|csrftoken|xsrftoken)$",
+    re.IGNORECASE,
+)
 
 
 def _vendor_cookie_family(cookie_name: str) -> Optional[str]:
@@ -24,6 +40,21 @@ def _vendor_cookie_family(cookie_name: str) -> Optional[str]:
         if pattern.match(cookie_name):
             return family
     return None
+
+
+def _is_authenticated_session_cookie(cookie_name: str) -> bool:
+    """Return True only when cookie_name matches an explicit session/auth/token indicator."""
+    return bool(_AUTHENTICATED_SESSION_COOKIE_RE.search(cookie_name.strip()))
+
+
+def _is_same_site_subdomain(test_netloc: str, target_netloc: str) -> bool:
+    """Return True when test_netloc is a subdomain of target_netloc (or its apex domain)."""
+    test_host = (test_netloc or "").split(":")[0].lower().strip()
+    target_host = (target_netloc or "").split(":")[0].lower().strip()
+    if not test_host or not target_host or test_host == target_host:
+        return False
+    base_host = target_host[4:] if target_host.startswith("www.") else target_host
+    return test_host.endswith("." + target_host) or test_host.endswith("." + base_host)
 
 
 class HeaderAuditor:
@@ -42,6 +73,7 @@ class HeaderAuditor:
             findings.append({
                 "severity": "MEDIUM",
                 "category": "HEADERS",
+                "rule_id": "BR-CSP-MISSING",
                 "title": "Missing Content-Security-Policy (CSP)",
                 "description": "The Content-Security-Policy header is missing, leaving the application vulnerable to cross-site scripting (XSS) and code injection.",
                 "endpoint": url,
@@ -51,45 +83,72 @@ class HeaderAuditor:
             })
         else:
             directives = [d.strip() for d in csp.split(";") if d.strip()]
-            dir_map = {}
+            dir_map: Dict[str, List[str]] = {}
+            raw_dir_map: Dict[str, str] = {}
             for d in directives:
                 parts = d.split()
                 if parts:
-                    dir_map[parts[0].lower()] = parts[1:]
+                    d_name = parts[0].lower()
+                    dir_map[d_name] = parts[1:]
+                    raw_dir_map[d_name] = d
 
-            if "'unsafe-inline'" in csp:
-                findings.append({
-                    "severity": "MEDIUM",
-                    "category": "HEADERS",
-                    "title": "Insecure CSP: 'unsafe-inline' Detected",
-                    "description": "CSP allows inline script or style execution, significantly reducing protection against XSS.",
-                    "endpoint": url,
-                    "evidence": f"CSP Directive contains 'unsafe-inline': {csp[:120]}...",
-                    "confidence": 0.95,
-                    "remediation": "Remove 'unsafe-inline' and employ cryptographic nonces or SHA-256 hashes for authorized scripts."
-                })
-            if "'unsafe-eval'" in csp:
-                findings.append({
-                    "severity": "MEDIUM",
-                    "category": "HEADERS",
-                    "title": "Insecure CSP: 'unsafe-eval' Detected",
-                    "description": "CSP permits dynamic string execution (eval, Function constructor), introducing code execution risks.",
-                    "endpoint": url,
-                    "evidence": f"CSP Directive contains 'unsafe-eval': {csp[:120]}...",
-                    "confidence": 0.95,
-                    "remediation": "Refactor application logic to eliminate dynamic string code evaluation and remove 'unsafe-eval'."
-                })
-            if "*" in csp.split():
-                findings.append({
-                    "severity": "LOW",
-                    "category": "HEADERS",
-                    "title": "Permissive CSP: Wildcard Host Allowed",
-                    "description": "CSP specifies a wildcard '*' allowing resources from any host domain.",
-                    "endpoint": url,
-                    "evidence": f"Wildcard host detected in CSP: {csp[:120]}...",
-                    "confidence": 0.9,
-                    "remediation": "Explicitly whitelist trusted origins instead of using wildcard domain scopes."
-                })
+            script_dir = "script-src" if "script-src" in dir_map else ("default-src" if "default-src" in dir_map else None)
+            if script_dir:
+                script_tokens_lower = [t.lower() for t in dir_map[script_dir]]
+                raw_script_directive = raw_dir_map[script_dir]
+                has_nonce_or_hash = any(
+                    t.strip("'\"").startswith(("nonce-", "sha256-", "sha384-", "sha512-"))
+                    for t in script_tokens_lower
+                )
+
+                # Per CSP Level 2/3, browsers ignore 'unsafe-inline' when a nonce or hash is present in script-src
+                if "'unsafe-inline'" in script_tokens_lower and not has_nonce_or_hash:
+                    findings.append({
+                        "severity": "MEDIUM",
+                        "category": "HEADERS",
+                        "rule_id": "BR-CSP-INLINE",
+                        "title": "Insecure CSP: 'unsafe-inline' Detected",
+                        "description": f"CSP '{script_dir}' allows inline script execution without a cryptographic nonce or hash fallback, significantly reducing protection against XSS.",
+                        "endpoint": url,
+                        "evidence": f"CSP Directive ({script_dir}): {raw_script_directive}",
+                        "confidence": 0.95,
+                        "remediation": "Remove 'unsafe-inline' and employ cryptographic nonces or SHA-256 hashes for authorized scripts."
+                    })
+                if "'unsafe-eval'" in script_tokens_lower:
+                    findings.append({
+                        "severity": "MEDIUM",
+                        "category": "HEADERS",
+                        "rule_id": "BR-CSP-EVAL",
+                        "title": "Insecure CSP: 'unsafe-eval' Detected",
+                        "description": f"CSP '{script_dir}' permits dynamic string execution (eval, Function constructor), introducing code execution risks.",
+                        "endpoint": url,
+                        "evidence": f"CSP Directive ({script_dir}): {raw_script_directive}",
+                        "confidence": 0.95,
+                        "remediation": "Refactor application logic to eliminate dynamic string code evaluation and remove 'unsafe-eval'."
+                    })
+
+            active_wildcard_dirs = [
+                "script-src", "default-src", "connect-src", "object-src",
+                "frame-src", "frame-ancestors", "style-src", "base-uri"
+            ]
+            wildcard_candidates = [d for d in active_wildcard_dirs if d in dir_map]
+            wildcard_candidates.extend(
+                d for d in dir_map if d not in active_wildcard_dirs and d not in ("img-src", "media-src", "font-src")
+            )
+            for d_name in wildcard_candidates:
+                if "*" in dir_map[d_name]:
+                    findings.append({
+                        "severity": "LOW",
+                        "category": "HEADERS",
+                        "rule_id": "BR-CSP-WILDCARD",
+                        "title": "Permissive CSP: Wildcard Host Allowed",
+                        "description": f"CSP '{d_name}' specifies a wildcard '*' allowing resources from any host domain.",
+                        "endpoint": url,
+                        "evidence": f"Wildcard host detected in CSP ({d_name}): {raw_dir_map[d_name]}",
+                        "confidence": 0.9,
+                        "remediation": "Explicitly whitelist trusted origins instead of using wildcard domain scopes."
+                    })
+                    break
 
         # 2. Strict-Transport-Security (HSTS)
         parsed_url = urllib.parse.urlparse(url)
@@ -99,6 +158,7 @@ class HeaderAuditor:
                 findings.append({
                     "severity": "HIGH",
                     "category": "HEADERS",
+                    "rule_id": "BR-HEADER-HSTS",
                     "title": "Missing Strict-Transport-Security (HSTS)",
                     "description": "HTTPS connection does not enforce HSTS, allowing potential SSL-stripping and man-in-the-middle downgrade attacks.",
                     "endpoint": url,
@@ -119,6 +179,7 @@ class HeaderAuditor:
                     findings.append({
                         "severity": "LOW",
                         "category": "HEADERS",
+                        "rule_id": "BR-HEADER-HSTS",
                         "title": "Suboptimal HSTS max-age Duration",
                         "description": f"HSTS max-age is set to {max_age} seconds (recommended is at least 31536000 seconds / 1 year).",
                         "endpoint": url,
@@ -134,6 +195,7 @@ class HeaderAuditor:
             findings.append({
                 "severity": "MEDIUM",
                 "category": "HEADERS",
+                "rule_id": "BR-HEADER-XFRAME",
                 "title": "Missing Anti-Clickjacking Header (X-Frame-Options / frame-ancestors)",
                 "description": "Application can be embedded inside an iframe on malicious sites, exposing users to UI redress/clickjacking attacks.",
                 "endpoint": url,
@@ -149,6 +211,7 @@ class HeaderAuditor:
             findings.append({
                 "severity": "LOW",
                 "category": "HEADERS",
+                "rule_id": "BR-HEADER-NOSNIFF",
                 "title": "Missing X-Content-Type-Options: nosniff",
                 "description": "Browsers may attempt MIME-type sniffing on responses, leading to script execution from non-script content types.",
                 "endpoint": url,
@@ -163,6 +226,7 @@ class HeaderAuditor:
             findings.append({
                 "severity": "LOW",
                 "category": "HEADERS",
+                "rule_id": "BR-HEADER-REFERRER",
                 "title": "Missing Referrer-Policy Header",
                 "description": "Without an explicit Referrer-Policy, user paths, session tokens, or sensitive IDs in URLs may leak to external referrers.",
                 "endpoint": url,
@@ -174,6 +238,7 @@ class HeaderAuditor:
             findings.append({
                 "severity": "MEDIUM",
                 "category": "HEADERS",
+                "rule_id": "BR-HEADER-REFERRER",
                 "title": "Insecure Referrer-Policy: unsafe-url",
                 "description": "Referrer-Policy is set to 'unsafe-url', which unconditionally leaks full request paths and queries to third parties.",
                 "endpoint": url,
@@ -188,6 +253,7 @@ class HeaderAuditor:
             findings.append({
                 "severity": "INFO",
                 "category": "HEADERS",
+                "rule_id": "BR-HEADER-PERMISSIONS",
                 "title": "Missing Permissions-Policy",
                 "description": "Permissions-Policy is absent; browser features like camera, microphone, and geolocation are not explicitly restricted.",
                 "endpoint": url,
@@ -202,6 +268,7 @@ class HeaderAuditor:
             findings.append({
                 "severity": "LOW",
                 "category": "HEADERS",
+                "rule_id": "BR-HEADER-BANNER",
                 "title": "Server Banner Version Disclosure",
                 "description": f"The Server header reveals detailed version information: '{server}'.",
                 "endpoint": url,
@@ -215,6 +282,7 @@ class HeaderAuditor:
             findings.append({
                 "severity": "LOW",
                 "category": "HEADERS",
+                "rule_id": "BR-HEADER-POWEREDBY",
                 "title": "Technology Disclosure via X-Powered-By",
                 "description": f"The backend framework discloses its identity: '{x_powered_by}'.",
                 "endpoint": url,
@@ -226,8 +294,8 @@ class HeaderAuditor:
         return findings
 
     @staticmethod
-    def audit_cookies(url: str, cookies_headers: List[str]) -> List[Dict[str, Any]]:
-        """Audit Set-Cookie directives for Secure, HttpOnly, and SameSite hygiene."""
+    def audit_cookies(url: str, cookies_headers: List[str], is_authenticated: bool = False) -> List[Dict[str, Any]]:
+        """Audit Set-Cookie directives for Secure, HttpOnly, and SameSite hygiene with auth-context awareness."""
         findings = []
         is_https = url.lower().startswith("https://")
         seen_cookies = set()  # Track (cookie_name.lower(), check_type) to prevent duplicates
@@ -241,7 +309,8 @@ class HeaderAuditor:
             cookie_name = name_val.split("=")[0].strip()
             flags = {p.lower().split("=")[0].strip(): (p.split("=")[1].strip() if "=" in p else True) for p in parts[1:]}
             vendor_family = _vendor_cookie_family(cookie_name)
-            
+            is_session_cookie = _is_authenticated_session_cookie(cookie_name)
+
             # Skip if we've already processed this cookie for this specific check type
             cookie_key = (cookie_name.lower(), "cookie_audit")
             if cookie_key in seen_cookies:
@@ -250,11 +319,11 @@ class HeaderAuditor:
 
             # Insecure cleartext HTTP cookie check
             if not is_https:
-                is_sensitive = any(kw in cookie_name.lower() for kw in ["sess", "auth", "token", "jwt", "id", "login", "key"])
-                if is_sensitive and not vendor_family:
+                if is_session_cookie and not vendor_family:
                     findings.append({
                         "severity": "HIGH",
                         "category": "COOKIES",
+                        "rule_id": "BR-COOKIE-CLEARTEXT",
                         "title": f"Sensitive Cookie '{cookie_name}' Transmitted over Insecure HTTP",
                         "description": f"The sensitive cookie '{cookie_name}' is set over unencrypted plaintext HTTP, exposing credentials and session states to cleartext network interception and downgrade attacks.",
                         "endpoint": url,
@@ -268,6 +337,7 @@ class HeaderAuditor:
                 findings.append({
                     "severity": "INFO" if vendor_family else "MEDIUM",
                     "category": "COOKIES",
+                    "rule_id": "BR-COOKIE-SECURE",
                     "title": f"Cookie '{cookie_name}' Missing 'Secure' Flag",
                     "description": f"The cookie '{cookie_name}' is transmitted over HTTPS but lacks the 'Secure' directive, risking interception via plaintext HTTP downgrade.",
                     "endpoint": url,
@@ -283,30 +353,31 @@ class HeaderAuditor:
                     findings.append({
                         "severity": "INFO",
                         "category": "COOKIES",
+                        "rule_id": "BR-COOKIE-HTTPONLY",
                         "title": f"Vendor Cookie '{cookie_name}' Missing 'HttpOnly' Flag",
                         "description": (
                             f"{vendor_family} cookie '{cookie_name}' is readable by JavaScript by design. "
-                            "Anti-bot and analytics SDKs must read and update this cookie in the browser; "
-                            "forcing HttpOnly would break vendor integrity checks. This is not a first-party session defect."
+                            "Analytics, consent, client-hint, and anti-bot SDKs read or update this cookie in the browser; "
+                            "forcing HttpOnly would break vendor/telemetry behavior. This is not an authenticated session defect."
                         ),
                         "endpoint": url,
                         "evidence": f"Set-Cookie: {cookie_str}",
                         "confidence": 0.8,
                         "remediation": (
-                            f"Do not set HttpOnly on '{cookie_name}'. Confirm the cookie is scoped to the vendor "
-                            "integration and is not reused as an application session token."
+                            f"Do not set HttpOnly on '{cookie_name}' if required by client-side telemetry/consent scripts. "
+                            "Confirm the cookie is not reused as an authenticated session token."
                         ),
                         "tags": ["vendor_integration", vendor_family, "httponly_false_positive"],
                     })
                 else:
-                    # Sensitive cookies (session, token, auth, id) deserve higher severity
-                    is_sensitive = any(kw in cookie_name.lower() for kw in ["sess", "auth", "token", "jwt", "id", "login", "key"])
-                    severity = "HIGH" if is_sensitive else "LOW"
+                    # Reserve HIGH strictly for explicit session/auth/token cookies in authenticated contexts
+                    severity = "HIGH" if (is_authenticated and is_session_cookie) else "LOW"
                     findings.append({
                         "severity": severity,
                         "category": "COOKIES",
+                        "rule_id": "BR-COOKIE-HTTPONLY",
                         "title": f"Cookie '{cookie_name}' Missing 'HttpOnly' Flag",
-                        "description": f"The cookie '{cookie_name}' is accessible via client-side JavaScript (`document.cookie`), making it vulnerable to extraction via XSS.",
+                        "description": f"The cookie '{cookie_name}' is accessible via client-side JavaScript (`document.cookie`), making it readable via XSS.",
                         "endpoint": url,
                         "evidence": f"Set-Cookie: {cookie_str}",
                         "confidence": 0.95,
@@ -318,6 +389,7 @@ class HeaderAuditor:
                 findings.append({
                     "severity": "INFO" if vendor_family else "LOW",
                     "category": "COOKIES",
+                    "rule_id": "BR-COOKIE-SAMESITE",
                     "title": f"Cookie '{cookie_name}' Missing 'SameSite' Attribute",
                     "description": f"The cookie '{cookie_name}' does not specify SameSite, potentially exposing users to Cross-Site Request Forgery (CSRF).",
                     "endpoint": url,
@@ -330,6 +402,7 @@ class HeaderAuditor:
                 findings.append({
                     "severity": "HIGH",
                     "category": "COOKIES",
+                    "rule_id": "BR-COOKIE-SAMESITE",
                     "title": f"Insecure SameSite=None Without Secure on '{cookie_name}'",
                     "description": f"Cookie '{cookie_name}' sets SameSite=None without the Secure attribute, which is rejected by modern browsers and leaves it vulnerable to cross-site transmission.",
                     "endpoint": url,
@@ -341,8 +414,14 @@ class HeaderAuditor:
         return findings
 
     @staticmethod
-    def audit_cors(url: str, acao_header: str, acac_header: str, tested_origin: str) -> List[Dict[str, Any]]:
-        """Audit Cross-Origin Resource Sharing (CORS) misconfigurations."""
+    def audit_cors(
+        url: str,
+        acao_header: str,
+        acac_header: str,
+        tested_origin: str,
+        is_authenticated: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Audit Cross-Origin Resource Sharing (CORS) misconfigurations using two-tier origin classification."""
         findings = []
         if not acao_header:
             return findings
@@ -355,25 +434,46 @@ class HeaderAuditor:
             findings.append({
                 "severity": "CRITICAL",
                 "category": "HEADERS",
+                "rule_id": "BR-CORS-WILDCARD",
                 "title": "Severe CORS Misconfiguration: Wildcard with Credentials",
                 "description": "The server responds with 'Access-Control-Allow-Origin: *' combined with 'Access-Control-Allow-Credentials: true'. While standard browsers block this combination to prevent cross-origin credential theft, this misconfiguration breaks cross-origin integrations and frequently leads developers to blindly reflect the Request Origin, creating a critical data exfiltration vulnerability.",
                 "endpoint": url,
-                "evidence": f"Access-Control-Allow-Origin: * | Access-Control-Allow-Credentials: true",
+                "evidence": "Access-Control-Allow-Origin: * | Access-Control-Allow-Credentials: true",
                 "confidence": 1.0,
                 "remediation": "Never combine wildcard origins with credentials. Restrict Access-Control-Allow-Origin to trusted domains."
             })
-        # Origin reflection: verify if server dynamically reflected the tested cross-origin request
+        # Origin reflection: distinguish external third-party origin reflection from same-site subdomain trust
         elif acao == tested_origin:
             parsed_test = urllib.parse.urlparse(tested_origin)
             parsed_url = urllib.parse.urlparse(url)
-            # Only flag if tested origin is distinct from target host or null
             if (parsed_test.netloc and parsed_test.netloc != parsed_url.netloc) or tested_origin == "null":
-                sev = "CRITICAL" if acac else "HIGH"
+                if _is_same_site_subdomain(parsed_test.netloc, parsed_url.netloc):
+                    sev = "MEDIUM" if acac else "LOW"
+                    title = "CORS Subdomain Origin Reflection" + (" with Credentials" if acac else "")
+                    description = (
+                        f"The server reflects same-site subdomain Request Origin '{tested_origin}' into Access-Control-Allow-Origin"
+                        + (
+                            " with credentials allowed. While same-site subdomain trust is a common first-party pattern, an XSS or subdomain takeover on any sibling subdomain could allow cross-subdomain data access."
+                            if acac
+                            else "."
+                        )
+                    )
+                    rule_id = "BR-CORS-SUBDOMAIN"
+                else:
+                    sev = ("CRITICAL" if is_authenticated else "HIGH") if acac else "MEDIUM"
+                    title = "CORS Insecure Origin Reflection" + (" with Credentials" if acac else "")
+                    description = (
+                        f"The server dynamically reflects untrusted external Request Origin '{tested_origin}' into Access-Control-Allow-Origin"
+                        + (" with credentials allowed, enabling cross-origin authenticated data theft." if acac else ".")
+                    )
+                    rule_id = "BR-CORS-CREDENTIALS" if acac else "BR-CORS-REFLECTION"
+
                 findings.append({
                     "severity": sev,
                     "category": "HEADERS",
-                    "title": "CORS Insecure Origin Reflection" + (" with Credentials" if acac else ""),
-                    "description": f"The server dynamically reflects untrusted Request Origin '{tested_origin}' into Access-Control-Allow-Origin" + (" with credentials allowed, enabling cross-origin authenticated data theft." if acac else "."),
+                    "rule_id": rule_id,
+                    "title": title,
+                    "description": description,
                     "endpoint": url,
                     "evidence": f"Reflected Origin: {acao} (Credentials allowed: {acac})",
                     "confidence": 0.95,

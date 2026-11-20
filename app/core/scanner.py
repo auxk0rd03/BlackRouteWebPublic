@@ -7,6 +7,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 import secrets
 import urllib.parse
 from pathlib import Path
@@ -26,7 +27,12 @@ from app.core.security import (
     is_safe_subresource_url,
 )
 from app.core.database import save_scan_record
-from app.core.engine_bridge import run_spider_extractor, run_surface_graph, _resolve_webpack_chunks_python
+from app.core.engine_bridge import (
+    engine_available,
+    run_spider_extractor,
+    run_surface_graph,
+    _resolve_webpack_chunks_python,
+)
 from app.core.auditor_headers import HeaderAuditor
 from app.core.auditor_secrets import SecretAuditor
 from app.core.auditor_api_routes import ApiRouteAuditor
@@ -98,7 +104,15 @@ def generate_target_output_artifacts(
     scan_meta = {
         "id": effective_scan_id,
         "target_url": report_data.get("target_url", ""),
-        "risk_score": report_data.get("risk_score", 15)
+        "risk_score": report_data.get("risk_score", 15),
+        "pages_crawled": report_data.get("pages_crawled", 0),
+        "endpoints_found": report_data.get("endpoints_found", 0),
+        "scan_profile": report_data.get("scan_profile", ""),
+        "initial_http_status": report_data.get("initial_http_status", 0),
+        "scan_duration": report_data.get("scan_duration", 0.0),
+        "engine_mode": report_data.get("engine_mode", ""),
+        "crawl_notes": report_data.get("crawl_notes", ""),
+        "scan_completed": report_data.get("scan_completed", ""),
     }
     md_content = build_markdown_triage(scan_meta, findings, endpoints)
     md_path.write_text(md_content, encoding="utf-8")
@@ -173,11 +187,11 @@ def generate_curl_poc(finding: Dict[str, Any]) -> str:
                 parsed = urllib.parse.urlparse(endpoint)
                 netloc = parsed.netloc or "target.domain"
                 tested_origin = f"https://origin-verify.{netloc}"
-            return f'curl -s -i "{endpoint}"{STEALTH_CURL_HEADERS_BLOCK} \\\n  -H "Origin: {tested_origin}"'
-        return f'curl -s -I "{endpoint}"{STEALTH_CURL_HEADERS_BLOCK}'
+            return f'curl -s -D - -o /dev/null "{endpoint}"{STEALTH_CURL_HEADERS_BLOCK} \\\n  -H "Origin: {tested_origin}"'
+        return f'curl -s -D - -o /dev/null "{endpoint}"{STEALTH_CURL_HEADERS_BLOCK}'
 
     elif category == "COOKIES":
-        return f'curl -s -I "{endpoint}"{STEALTH_CURL_HEADERS_BLOCK} \\\n  | grep -i "set-cookie"'
+        return f'curl -s -D - -o /dev/null "{endpoint}"{STEALTH_CURL_HEADERS_BLOCK} \\\n  | grep -i "set-cookie"'
 
     elif category == "SECRETS":
         search_hint = finding.get("search_hint", "")
@@ -386,6 +400,12 @@ class WebScanner:
         self.markdown_file: str = ""
         self.target_output_dir: Optional[str] = None
         self.risk_score: int = 15
+        self.initial_http_status: int = 0
+        self.scan_duration_s: float = 0.0
+        self.spider_engine_mode: str = "NATIVE_RUST" if engine_available("web_spider") else "PYTHON_FALLBACK"
+        self.graph_engine_mode: str = "NATIVE_GO" if engine_available("surface_graph") else "PYTHON_FALLBACK"
+        self.waf_detected: bool = False
+        self.crawl_notes: str = ""
 
     def log(self, message: str, log_type: str = "info") -> None:
         """Append log to buffer and broadcast in real time to SSE streams."""
@@ -511,6 +531,11 @@ class WebScanner:
     ) -> Optional[int]:
         """Generate PDF/Markdown reports, persist scan record to SQLite, and populate Output/Targ00N/ if applicable."""
         self.risk_score = holistic_risk
+        scan_profile = (
+            f"stealth_mode={self.stealth_mode}, shadow_mode={self.shadow_mode}, "
+            f"local_staging={self.local_staging}"
+        )
+        engine_mode = f"spider={self.spider_engine_mode}, surface_graph={self.graph_engine_mode}"
         report_data = {
             "target_url": validated_url,
             "pages_crawled": self.pages_crawled,
@@ -518,7 +543,12 @@ class WebScanner:
             "findings": self.findings,
             "technologies": techs,
             "sensitive_routes": sensitive_routes,
-            "risk_score": holistic_risk
+            "risk_score": holistic_risk,
+            "scan_profile": scan_profile,
+            "initial_http_status": self.initial_http_status,
+            "scan_duration": self.scan_duration_s,
+            "engine_mode": engine_mode,
+            "crawl_notes": self.crawl_notes,
         }
 
         report_file = ""
@@ -591,6 +621,7 @@ class WebScanner:
                 SCAN_LOGS.clear()
 
         self.log("Initializing BlackRoute-Web Mission Protocol...", "info")
+        pipeline_start = time.perf_counter()
         self.temp_dir = tempfile.mkdtemp(prefix="br_web_")
         os.chmod(self.temp_dir, 0o700)
 
@@ -627,16 +658,19 @@ class WebScanner:
             # 2. Phase 1: Header, Cookie, CORS & Transport Posture Audit
             self.log("Phase 1: Assessing HTTP Headers, Cookies, and Transport Security...", "info")
             initial_resp = None
+            is_auth_ctx = bool(self.auth_header or self.session_token or self.session_cookies)
             async with httpx.AsyncClient(headers=req_headers, verify=False, follow_redirects=True, timeout=12.0) as client:
                 try:
                     initial_resp = await client.get(validated_url)
                     self.pages_crawled += 1
                     status = initial_resp.status_code
+                    self.initial_http_status = status
                     self.log(f"Target Acquired: HTTP {status} ({len(initial_resp.content)} bytes)", "success")
 
                     # Check WAF indications on initial response
                     from app.core.auditor_api_routes import is_waf_block
                     if is_waf_block(initial_resp):
+                        self.waf_detected = True
                         self.log("[WAF NOTICE] Target returned perimeter defense / rate-limit signals. Engaging stealth throttles.", "warn")
 
                     # Header Audit
@@ -647,18 +681,41 @@ class WebScanner:
                     # Cookie Audit
                     cookie_headers = initial_resp.headers.get_list("set-cookie")
                     if cookie_headers:
-                        cookie_findings = HeaderAuditor.audit_cookies(str(initial_resp.url), cookie_headers)
+                        cookie_findings = HeaderAuditor.audit_cookies(
+                            str(initial_resp.url),
+                            cookie_headers,
+                            is_authenticated=is_auth_ctx,
+                        )
                         self.findings.extend(cookie_findings)
                         self.log(f"Cookie Hygiene Checked: {len(cookie_findings)} security flags raised.", "info")
 
-                    # CORS Dynamic Audit (actively test origin reflection with randomized benign probe origin to prevent SIEM alerts)
+                    # Two-Tier CORS Dynamic Audit:
+                    # Tier 1: external third-party origin; Tier 2: same-site subdomain trust
                     parsed_host = urllib.parse.urlparse(validated_url).netloc
                     probe_nonce = secrets.token_hex(4)
-                    benign_origin = f"https://probe-{probe_nonce}.{parsed_host}"
-                    cors_resp = await client.get(validated_url, headers={"Origin": benign_origin})
-                    acao = cors_resp.headers.get("access-control-allow-origin", "")
-                    acac = cors_resp.headers.get("access-control-allow-credentials", "")
-                    cors_findings = HeaderAuditor.audit_cors(str(initial_resp.url), acao, acac, benign_origin)
+                    external_origin = f"https://probe-{probe_nonce}.example.invalid"
+                    cors_ext_resp = await client.get(validated_url, headers={"Origin": external_origin})
+                    acao_ext = cors_ext_resp.headers.get("access-control-allow-origin", "")
+                    acac_ext = cors_ext_resp.headers.get("access-control-allow-credentials", "")
+                    cors_findings = HeaderAuditor.audit_cors(
+                        str(initial_resp.url),
+                        acao_ext,
+                        acac_ext,
+                        external_origin,
+                        is_authenticated=is_auth_ctx,
+                    )
+                    if not cors_findings:
+                        subdomain_origin = f"https://probe-{probe_nonce}.{parsed_host}"
+                        cors_sub_resp = await client.get(validated_url, headers={"Origin": subdomain_origin})
+                        acao_sub = cors_sub_resp.headers.get("access-control-allow-origin", "")
+                        acac_sub = cors_sub_resp.headers.get("access-control-allow-credentials", "")
+                        cors_findings = HeaderAuditor.audit_cors(
+                            str(initial_resp.url),
+                            acao_sub,
+                            acac_sub,
+                            subdomain_origin,
+                            is_authenticated=is_auth_ctx,
+                        )
                     self.findings.extend(cors_findings)
 
                 except Exception as net_err:
@@ -797,8 +854,26 @@ class WebScanner:
 
             # Execute Rust web_spider on downloaded assets with bounded depth and target domain
             spider_result = run_spider_extractor(self.temp_dir, depth=crawl_depth, target_domain=target_domain)
+            self.spider_engine_mode = spider_result.get("engine_mode", self.spider_engine_mode)
             extracted_endpoints = spider_result.get("endpoints", [])
-            self.log(f"Spidering Complete: {len(extracted_endpoints)} client routes and API paths harvested.", "success")
+            if not extracted_endpoints:
+                if self.waf_detected:
+                    self.crawl_notes = "WAF or bot-challenge detected on initial request; 0 static client routes extracted."
+                elif self.initial_http_status >= 400:
+                    self.crawl_notes = f"Initial HTTP {self.initial_http_status} response yielded 0 crawlable links or scripts."
+                elif len(downloaded_scripts) == 0:
+                    self.crawl_notes = "Initial HTML contained 0 external scripts or same-origin links (static/bot-filtered DOM)."
+                else:
+                    self.crawl_notes = (
+                        f"Crawled {len(visited_pages)} page(s) and {len(downloaded_scripts)} script(s); "
+                        "0 static route literals matched extraction rules (JS-rendered/obfuscated DOM)."
+                    )
+            else:
+                self.crawl_notes = (
+                    f"Crawled {len(visited_pages)} page(s) and {len(downloaded_scripts)} script(s); "
+                    f"harvested {len(extracted_endpoints)} route(s)."
+                )
+            self.log(f"Spidering Complete: {len(extracted_endpoints)} client routes and API paths harvested. ({self.crawl_notes})", "success")
 
             for ep in extracted_endpoints:
                 self.endpoints.append({
@@ -931,6 +1006,8 @@ class WebScanner:
                 surface_headers["set-cookie"] = all_cookies
 
             surface_data = run_surface_graph(all_paths, surface_headers, combined_content, findings=self.findings)
+            self.graph_engine_mode = surface_data.get("engine_mode", self.graph_engine_mode)
+            self.scan_duration_s = round(time.perf_counter() - pipeline_start, 2)
             techs = surface_data.get("technologies", [])
             for t in techs:
                 self.log(f"Detected Technology: [{t.get('category')}] {t.get('name')}", "info")

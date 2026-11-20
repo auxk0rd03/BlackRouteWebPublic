@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -356,62 +357,8 @@ func analyzeSurface(payload InputPayload) SurfaceResult {
 		riskScore += 5
 	}
 
-	// 3. Actionable vs Vendor Findings weight (if findings provided)
-	critCount := 0
-	highCount := 0
-	medCount := 0
-	lowCount := 0
-	vendorOrInfoCount := 0
-
-	for _, f := range payload.Findings {
-		isVendor := f.VendorContext != "" || strings.HasPrefix(strings.ToLower(f.Title), "[third-party]")
-		for _, tag := range f.Tags {
-			if tag == "third_party" || tag == "vendor_integration" || tag == "vendor_script" {
-				isVendor = true
-				break
-			}
-		}
-
-		sev := strings.ToUpper(f.Severity)
-		if isVendor || sev == "INFO" {
-			vendorOrInfoCount++
-		} else {
-			switch sev {
-			case "CRITICAL":
-				critCount++
-			case "HIGH":
-				highCount++
-			case "MEDIUM":
-				medCount++
-			case "LOW":
-				lowCount++
-			}
-		}
-	}
-
-	findingImpact := (critCount * 25) + (highCount * 15) + (medCount * 5) + (lowCount * 2)
-	// Pure INFO or vendor integration items contribute minimal weight (capped at +2)
-	vendorImpact := 0
-	if vendorOrInfoCount > 0 {
-		vendorImpact = 1
-		if vendorOrInfoCount >= 5 {
-			vendorImpact = 2
-		}
-	}
-
-	if len(payload.Findings) > 0 {
-		composite := (riskScore / 2) + findingImpact + vendorImpact
-		if composite > riskScore {
-			riskScore = composite
-		}
-	}
-
-	if riskScore > 100 {
-		riskScore = 100
-	}
-	if riskScore < 0 {
-		riskScore = 0
-	}
+	// 3. Category-capped & diminishing-returns Risk Score Calculation (0 - 100)
+	riskScore = calculateRiskScore(riskScore, len(dedupSensitive), payload.Findings)
 
 	nodes := make([]string, 0, len(nodeSet))
 	for n := range nodeSet {
@@ -526,6 +473,157 @@ func fingerprintTechnologies(headers FlexibleHeaders, content string) []TechFing
 	}
 
 	return techs
+}
+
+func inferFindingCategory(f FindingPayload) string {
+	cat := strings.ToUpper(strings.TrimSpace(f.Category))
+	if cat != "" {
+		return cat
+	}
+	t := strings.ToLower(f.Title)
+	if strings.Contains(t, "cookie") {
+		return "COOKIES"
+	}
+	if strings.Contains(t, "csp") || strings.Contains(t, "cors") || strings.Contains(t, "hsts") ||
+		strings.Contains(t, "referrer") || strings.Contains(t, "permissions") || strings.Contains(t, "frame") ||
+		strings.Contains(t, "nosniff") || strings.Contains(t, "server") || strings.Contains(t, "powered") {
+		return "HEADERS"
+	}
+	if strings.Contains(t, "secret") || strings.Contains(t, "key") || strings.Contains(t, "token") {
+		return "SECRETS"
+	}
+	if strings.Contains(t, "dom") || strings.Contains(t, "xss") || strings.Contains(t, "postmessage") {
+		return "DOM_XSS"
+	}
+	if strings.Contains(t, "graphql") || strings.Contains(t, "swagger") || strings.Contains(t, "openapi") ||
+		strings.Contains(t, "actuator") || strings.Contains(t, ".git") || strings.Contains(t, ".env") {
+		return "API_EXPOSURE"
+	}
+	return "GENERAL"
+}
+
+func calculateRiskScore(baseScore int, sensitiveRoutesCount int, findings []FindingPayload) int {
+	if len(findings) == 0 {
+		if baseScore > 100 {
+			return 100
+		}
+		if baseScore < 0 {
+			return 0
+		}
+		return baseScore
+	}
+
+	severityWeights := map[string]int{
+		"CRITICAL": 25,
+		"HIGH":     15,
+		"MEDIUM":   6,
+		"LOW":      2,
+	}
+	categoryCaps := map[string]int{
+		"COOKIES": 15,
+		"HEADERS": 15,
+	}
+
+	catWeights := make(map[string][]int)
+	catCrits := make(map[string]int)
+	critCount := 0
+	vendorOrInfoCount := 0
+
+	for _, f := range findings {
+		isVendor := f.VendorContext != "" || strings.HasPrefix(strings.ToLower(f.Title), "[third-party]")
+		for _, tag := range f.Tags {
+			if tag == "third_party" || tag == "vendor_integration" || tag == "vendor_script" {
+				isVendor = true
+				break
+			}
+		}
+
+		sev := strings.ToUpper(strings.TrimSpace(f.Severity))
+		if isVendor || sev == "INFO" {
+			vendorOrInfoCount++
+			continue
+		}
+		w, ok := severityWeights[sev]
+		if !ok {
+			continue
+		}
+		cat := inferFindingCategory(f)
+		if sev == "CRITICAL" {
+			critCount++
+			catCrits[cat]++
+		}
+		catWeights[cat] = append(catWeights[cat], w)
+	}
+
+	totalCategoryImpact := 0
+	activeCatImpact := 0
+	for cat, weights := range catWeights {
+		sort.Slice(weights, func(i, j int) bool { return weights[i] > weights[j] })
+		catSum := 0
+		for idx, w := range weights {
+			var contrib int
+			if idx == 0 {
+				contrib = w
+			} else if idx == 1 {
+				contrib = w / 2
+				if contrib < 1 {
+					contrib = 1
+				}
+			} else {
+				contrib = w / 4
+				if contrib < 1 {
+					contrib = 1
+				}
+			}
+			catSum += contrib
+		}
+		capVal, hasCap := categoryCaps[cat]
+		if !hasCap {
+			capVal = 60
+		} else if catCrits[cat] > 0 {
+			critCap := catCrits[cat] * 25
+			if critCap > capVal {
+				capVal = critCap
+			}
+			if capVal > 60 {
+				capVal = 60
+			}
+		}
+		if catSum > capVal {
+			catSum = capVal
+		}
+		totalCategoryImpact += catSum
+		if cat != "COOKIES" && cat != "HEADERS" {
+			activeCatImpact += catSum
+		}
+	}
+
+	vendorImpact := 0
+	if vendorOrInfoCount > 0 {
+		vendorImpact = 1
+		if vendorOrInfoCount >= 5 {
+			vendorImpact = 2
+		}
+	}
+
+	riskScore := baseScore
+	composite := (baseScore / 2) + totalCategoryImpact + vendorImpact
+	if composite > riskScore {
+		riskScore = composite
+	}
+
+	hasActiveOrCritical := critCount > 0 || activeCatImpact > 0
+	if !hasActiveOrCritical && sensitiveRoutesCount == 0 && riskScore > 40 {
+		riskScore = 40
+	}
+
+	if riskScore > 100 {
+		return 100
+	}
+	if riskScore < 0 {
+		return 0
+	}
+	return riskScore
 }
 
 func deduplicate(items []string) []string {
